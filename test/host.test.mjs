@@ -1,6 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
+import { mkdtemp, mkdir, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import * as plugin from '../index.js'
 
 function fakeResponse() {
@@ -22,7 +25,7 @@ function fakeResponse() {
   }
 }
 
-function captureRoute({ admit = () => ({ rejection: 401 }) } = {}) {
+function captureRoute({ admit = () => ({ rejection: 401 }), ...services } = {}) {
   let route
   const routes = []
   const ctx = {
@@ -39,6 +42,7 @@ function captureRoute({ admit = () => ({ rejection: 401 }) } = {}) {
     },
     connection: { admit },
     logger: { warn() {} },
+    ...services,
   }
   plugin.apply(ctx)
   route.routes = routes
@@ -190,3 +194,53 @@ test('refuses a non-owner principal', async () => {
   assert.equal(res.status, 403)
   assert.equal(JSON.parse(res.body).code, 'forbidden')
 })
+
+for (const failureAt of [null, 'append', 'flush', 'attach', 'archive', 'changed', 'active']) {
+  test(`move preserves the original until the copy is durable: ${failureAt ?? 'success'}`, async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-move-test-'))
+    try {
+      const targetPath = join(root, 'target')
+      await mkdir(targetPath)
+      const calls = []
+      let reads = 0
+      const step = async (name) => {
+        calls.push(name)
+        if (failureAt === name) throw new Error(`failed ${name}`)
+      }
+      const target = { id: 'target', path: targetPath, sessionIds: [], attachSession: () => step('attach') }
+      const route = captureRoute({
+        admit: () => ({ peer: { principal: { kind: 'owner' } } }),
+        waterfall: async () => failureAt === 'active' ? [{ kind: 'turn' }] : [],
+        get: () => undefined,
+        workspaceRegistry: {
+          get: () => target, list: () => [], archivedSessionIds: [], pinnedSessionIds: [],
+          archiveSession: () => step('archive'),
+        },
+        sessionQuery: { readSession: async () => ({
+          session: { id: 'source', version: 0, cwd: root, createdAt: 1 },
+          inheritedEventCount: 0,
+          events: failureAt === 'changed' && reads++ > 0 ? [{ seq: 1 }, { seq: 2 }] : [{ seq: 1 }],
+        }) },
+        sessionPersistence: { create: async () => {
+          await step('create')
+          return { append: () => step('append'), flush: () => step('flush'), close: () => step('close') }
+        } },
+      })
+      const { req, emit } = request('POST', 'application/json', JSON.stringify({ sessionId: 'source', workspaceId: 'target' }))
+      const res = fakeResponse()
+      const pending = route.handler(req, res)
+      emit()
+      await pending
+      if (failureAt === null) {
+        assert.equal(res.status, 200)
+        assert.deepEqual(calls, ['create', 'append', 'flush', 'close', 'attach', 'archive'])
+      } else {
+        assert.notEqual(res.status, 200)
+        if (failureAt !== 'archive') assert.ok(!calls.includes('archive'))
+        if (failureAt === 'active') assert.deepEqual(calls, [])
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+}

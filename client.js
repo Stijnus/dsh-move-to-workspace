@@ -444,7 +444,7 @@ window.__ModuleLoader__.load({
      * @param props - owner share, menu open state, Workspaces Hook, and locale.
      * @returns the menu row, or nothing for an archived row.
      */
-    function MoveToWorkspaceMenuItem({ sessionId, useMenuOpenState, useWorkspaces, t }) {
+    function MoveToWorkspaceMenuItem({ sessionId, displayTitle, useMenuOpenState, useWorkspaces, t }) {
       const [, setMenuOpen] = useMenuOpenState()
       const [hover, setHover] = React.useState(false)
       const archived = useWorkspaces((snapshot) => snapshot.archivedSessionIds.includes(sessionId))
@@ -461,7 +461,7 @@ window.__ModuleLoader__.load({
           onBlur: () => setHover(false),
           onClick: () => {
             setMenuOpen(false)
-            openMoveDialog(sessionId)
+            openMoveDialog(sessionId, displayTitle)
           },
         },
         h(MoveIcon),
@@ -623,7 +623,7 @@ window.__ModuleLoader__.load({
         }
       }
 
-      const titleText = request.displayTitle === '' ? t('dialog.untitled') : request.displayTitle
+      const titleText = typeof request.displayTitle !== 'string' || request.displayTitle === '' ? t('dialog.untitled') : request.displayTitle
       const idle = !busy && !creating
       const blocked = !idle || selected === null
 
@@ -1345,7 +1345,7 @@ window.__ModuleLoader__.load({
         }
       }
 
-      const titleText = request.displayTitle === '' ? t('dialog.untitled') : request.displayTitle
+      const titleText = typeof request.displayTitle !== 'string' || request.displayTitle === '' ? t('dialog.untitled') : request.displayTitle
 
       return h(
         'div',
@@ -1536,7 +1536,7 @@ window.__ModuleLoader__.load({
         }
       }
 
-      const titleText = request.displayTitle === '' ? t('dialog.untitled') : request.displayTitle
+      const titleText = typeof request.displayTitle !== 'string' || request.displayTitle === '' ? t('dialog.untitled') : request.displayTitle
 
       return h(
         'div',

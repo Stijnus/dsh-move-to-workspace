@@ -23,14 +23,12 @@ existing conversation therefore cannot be re-pointed at a folder in place.
 
 This plugin performs the supported equivalent:
 
-1. archives the original conversation (the Host's activity check refuses the
-   move while a turn, subagent, background job, or scheduled task still runs),
-2. copies the complete event log into a new Session whose header records the
-   target workspace directory,
-3. attaches that new Session to the target workspace, rebuilds its projection
-   checkpoint so the sidebar row carries the title immediately, restores the
-   original's pinned state, and opens it,
-4. announces the new Session so connected Clients show the row at once.
+1. checks for running turns, subagents, background jobs and scheduled tasks,
+2. copies the complete event log into a new Session and flushes it durably,
+3. attaches the copy to the target workspace and checks that the source transcript has not changed,
+4. archives the original, restores its pin on the copy and announces the new Session.
+
+Copy or attachment failures leave the original visible. If the source changes or starts work during copying, archival is refused; an already attached copy remains available alongside the original.
 
 When the conversation's recorded directory already *is* the target workspace
 directory (for example an ungrouped conversation that ran there), the plugin
@@ -138,7 +136,7 @@ Conversations that are already correctly grouped, ambiguous matches, and
 generic locations like home or `/tmp` are counted as staying put rather than
 guessed.
 
-Applying uses the same archive-copy-attach operation as **Move to workspace…**,
+Applying uses the same copy-attach-archive operation as **Move to workspace…**,
 so moved conversations keep their history and title, and the originals are
 archived in their previous workspace.
 
@@ -148,7 +146,7 @@ archived in their previous workspace.
 | --- | --- |
 | `package.json` | Bundle manifest (`dsh.bundle.patch`) and the browser half (`dsh.client`). |
 | `cordis.patch.yml` | Inserts the Host row `move-to-workspace`. |
-| `index.js` | Host half: the `POST /move-to-workspace` endpoint, the archive/copy/attach operation, and the Session announcement. |
+| `index.js` | Host half: the `POST /move-to-workspace` endpoint, the copy/attach/archive operation, and the Session announcement. |
 | `client.js` | Browser half: the session row action, the workspace picker dialog, and its create-a-workspace row. |
 | `locale/en.json`, `locale/zh.json` | Plugin Manager title/description. |
 | `test/` | Node test-runner checks for the Host contract, the endpoint guards, and the Client registrations. |

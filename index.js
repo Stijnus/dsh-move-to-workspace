@@ -134,9 +134,8 @@ async function serveMove(ctx, request, response) {
 /**
  * Relocate one conversation into another Workspace.
  *
- * The original is archived first, so the activity waterfall inside the
- * registry decides up front whether anything still runs. A later failure
- * restores the original; a copy that was already attached stays attached.
+ * Reject running work before copying. Archive the original only after the
+ * copy is durable and attached; failed transfers leave the original visible.
  *
  * @param ctx - host context.
  * @param sessionId - Session to move.
@@ -202,24 +201,22 @@ async function moveSession(ctx, sessionId, workspaceId) {
   }
 
   const pinned = registry.pinnedSessionIds.includes(sessionId)
-  try {
-    await registry.archiveSession(sessionId)
-  } catch (error) {
-    if (isErrorName(error, 'WorkspaceActiveSessionError')) {
-      throw new MoveError(409, 'session-active', 'The conversation still has running work.', {
-        activity: sanitizeActivity(error.activity),
-      })
-    }
-    if (isErrorName(error, 'WorkspaceUnknownSessionError')) {
-      throw new MoveError(404, 'session-not-found', `Conversation "${sessionId}" does not exist.`)
-    }
-    throw error
+  const activity = await ctx.waterfall('workspace/session-activity', { sessionId }, () => Promise.resolve([]))
+  if (activity.length > 0) {
+    throw new MoveError(409, 'session-active', 'The conversation still has running work.', {
+      activity: sanitizeActivity(activity),
+    })
   }
 
   let copy
   try {
     copy = await copySession(ctx, snapshot, target)
     await target.attachSession(copy.sessionId)
+    const current = await ctx.sessionQuery.readSession(sessionId)
+    if (current.events.length !== snapshot.events.length || current.events.at(-1)?.seq !== snapshot.events.at(-1)?.seq) {
+      throw new MoveError(409, 'source-changed', 'The original changed during the copy and was not archived.', { sessionId: copy.sessionId })
+    }
+    await registry.archiveSession(sessionId)
     if (pinned) {
       try {
         await registry.pinSession(copy.sessionId)
@@ -230,11 +227,12 @@ async function moveSession(ctx, sessionId, workspaceId) {
     announceSession(ctx, copy)
     return { sessionId: copy.sessionId, workspaceId: target.id, copied: true }
   } catch (error) {
-    // The original was archived before the copy; put it back where it was.
-    try {
-      await registry.unarchiveSession(sessionId)
-    } catch (restoreError) {
-      ctx.logger.warn(`move-to-workspace: could not restore original "${sessionId}" after a failed move: ${describeError(restoreError)}`)
+    if (copy !== undefined) announceSession(ctx, copy)
+    if (isErrorName(error, 'WorkspaceActiveSessionError')) {
+      throw new MoveError(409, 'session-active', 'The conversation still has running work.', {
+        activity: sanitizeActivity(error.activity),
+        ...(copy === undefined ? {} : { sessionId: copy.sessionId }),
+      })
     }
     if (error instanceof MoveError) throw error
     const suffix = copy === undefined ? '' : ` The copied conversation is "${copy.sessionId}".`

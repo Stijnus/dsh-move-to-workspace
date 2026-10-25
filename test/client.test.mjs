@@ -44,7 +44,7 @@ function loadClient() {
   })
   const module = definition.factory((name) => (name === 'react' ? react : {}))
   const ctx = {
-    locale: { bind: () => (key) => key, register() {} },
+    locale: { bind: () => (key) => key === 'dialog.description' ? 'Copy {title}' : key, register() {} },
     effect(fn) {
       const dispose = fn()
       return typeof dispose === 'function' ? dispose : () => {}
@@ -80,7 +80,7 @@ function loadClient() {
 function slotProps(overrides = {}) {
   return {
     useWorkspaces: (selector) => selector(WORKSPACES),
-    t: (key) => key,
+    t: (key) => key === 'dialog.description' ? 'Copy {title}' : key,
     onMoved() {},
     pickDirectory: async () => null,
     createWorkspace: async () => ({ workspaceId: 'w3', sessionIds: [] }),
@@ -227,4 +227,5 @@ test('clicking the row opens a dialog that can register a new workspace', () => 
   assert.ok(text.includes('dialog.create'), 'create-workspace row is rendered')
   assert.ok(text.includes('confirm'), 'confirm button is rendered')
   assert.ok(text.includes('Target'), 'existing workspace is listed')
+  assert.ok(text.includes('Copy Row'), 'conversation title is retained')
 })
