@@ -6,6 +6,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-10-25
+
+### Fixed
+
+- The confirming Rename row now registers with a distinct shadowing priority,
+  so it replaces the built-in row instead of failing registration. In 0.1.6 the
+  same-priority registration aborted the Client half, which also removed the
+  plugin's other menu entries until reload.
+
 ## [0.1.6] - 2026-10-25
 
 ### Changed

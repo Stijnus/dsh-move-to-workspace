@@ -1732,6 +1732,7 @@ window.__ModuleLoader__.load({
               name: MENU_SLOT,
               id: 'rename',
               order: 200,
+              priority: 1,
               locale: NS,
             },
             RenameConversationMenuItem,
