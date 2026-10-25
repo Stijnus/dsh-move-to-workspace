@@ -10,12 +10,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- Documentation-only release: adds npm, provenance, release and license badges
-  and a Release provenance section to the README, and documents trusted
-  publishing plus attestation verification in RELEASING.md. No runtime or
-  behaviour change.
-- Published through the GitHub Actions trusted-publishing workflow with a SLSA
-  provenance attestation, confirming the release path after the docs update.
+- README: added npm version, npm provenance (SLSA v1), release workflow and
+  license badges, plus a **Release provenance** section that documents OIDC
+  trusted publishing and how to verify an attestation.
+- RELEASING.md: recorded the configured GitHub Actions trusted publisher, the
+  tokenless OIDC flow, and the `dist.attestations` / `npm audit signatures`
+  verification commands.
+- Documentation-only release; no runtime or behaviour change.
+
+Published from GitHub Actions by the tag-triggered trusted-publishing workflow;
+the npm tarball for this version carries a SLSA
+`https://slsa.dev/provenance/v1` attestation.
 
 ## [0.1.1] - 2026-10-25
 
@@ -40,3 +45,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Authenticated same-origin `POST /move-to-workspace` Host endpoint with stable
   failure codes, including a running-work refusal that names what to stop.
 - English and Chinese labels, plugin icon, and a format-1 market index.
+
+[Unreleased]: https://github.com/Stijnus/dsh-move-to-workspace/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/Stijnus/dsh-move-to-workspace/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/Stijnus/dsh-move-to-workspace/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/Stijnus/dsh-move-to-workspace/releases/tag/v0.1.0
