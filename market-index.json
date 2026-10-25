@@ -50,8 +50,8 @@
       },
       "versions": [
         {
-          "version": "0.1.0",
-          "publishTimestamp": 1792925406,
+          "version": "0.1.1",
+          "publishTimestamp": 1792927813,
           "source": {
             "type": "npm",
             "registry": "https://registry.npmjs.org/"
