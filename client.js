@@ -49,6 +49,15 @@ window.__ModuleLoader__.load({
         'organize.planFailed': 'The organization plan could not be loaded.',
         'organize.done': 'Organized {count} conversations.',
         'delete.menu': 'Delete conversation…',
+        'rename.menu': 'Rename',
+        'rename.title': 'Rename conversation',
+        'rename.description': 'Change the title of “{title}”. The new title is saved immediately when you confirm.',
+        'rename.field': 'Conversation title',
+        'rename.confirm': 'Rename',
+        'rename.saving': 'Renaming…',
+        'rename.errorEmpty': 'The title cannot be empty.',
+        'rename.errorInvalid': 'That title is not allowed.',
+        'rename.errorFailed': 'The conversation could not be renamed.',
         'delete.title': 'Delete conversation',
         'delete.description': 'Permanently delete “{title}”?',
         'delete.warning':
@@ -123,6 +132,15 @@ window.__ModuleLoader__.load({
         'organize.planFailed': '无法加载整理计划。',
         'organize.done': '已整理 {count} 个会话。',
         'delete.menu': '删除会话…',
+        'rename.menu': '重命名',
+        'rename.title': '重命名会话',
+        'rename.description': '修改“{title}”的标题。确认后新标题会立即保存。',
+        'rename.field': '会话标题',
+        'rename.confirm': '重命名',
+        'rename.saving': '正在重命名…',
+        'rename.errorEmpty': '标题不能为空。',
+        'rename.errorInvalid': '该标题不被允许。',
+        'rename.errorFailed': '无法重命名该会话。',
         'delete.title': '删除会话',
         'delete.description': '永久删除“{title}”？',
         'delete.warning': '这会从磁盘中移除会话日志，且无法撤销。如果以后可能用到，请改用归档。',
@@ -1381,6 +1399,226 @@ window.__ModuleLoader__.load({
       )
     }
 
+    // Rename confirmation request, raised from the row menu.
+    let renameRequest = null
+    const renameListeners = new Set()
+
+    function openRenameDialog(sessionId, displayTitle) {
+      renameRequest = { sessionId, displayTitle, nonce: `${Date.now()}-${Math.random()}` }
+      for (const listener of renameListeners) listener(renameRequest)
+    }
+
+    function closeRenameDialog() {
+      renameRequest = null
+      for (const listener of renameListeners) listener(null)
+    }
+
+    function useRenameRequest() {
+      const [current, setCurrent] = React.useState(renameRequest)
+      React.useEffect(() => {
+        renameListeners.add(setCurrent)
+        setCurrent(renameRequest)
+        return () => {
+          renameListeners.delete(setCurrent)
+        }
+      }, [])
+      return current
+    }
+
+    /** Pencil glyph for the rename row. */
+    function RenameIcon() {
+      return h(
+        'svg',
+        {
+          width: 16,
+          height: 16,
+          viewBox: '0 0 16 16',
+          fill: 'none',
+          stroke: 'currentColor',
+          strokeWidth: 1.3,
+          strokeLinecap: 'round',
+          strokeLinejoin: 'round',
+          'aria-hidden': true,
+          style: { display: 'block', flex: 'none' },
+        },
+        h('path', { d: 'M3 13h2.5l7.1-7.1a1.2 1.2 0 0 0 0-1.7l-.8-.8a1.2 1.2 0 0 0-1.7 0L3 10.5z' }),
+        h('path', { d: 'M9.6 4.9 11.1 6.4' }),
+      )
+    }
+
+    /**
+     * Rename row: shadows the built-in Rename so the title edit always passes
+     * through a confirmation dialog.
+     * @param props - owner share, menu open state, and locale.
+     * @returns the menu row.
+     */
+    function RenameConversationMenuItem({ sessionId, displayTitle, useMenuOpenState, t }) {
+      const [, setMenuOpen] = useMenuOpenState()
+      const [hover, setHover] = React.useState(false)
+      return h(
+        'button',
+        {
+          type: 'button',
+          role: 'menuitem',
+          style: hover ? { ...MENU_ITEM_STYLE, ...MENU_ITEM_HOVER_STYLE } : MENU_ITEM_STYLE,
+          onMouseEnter: () => setHover(true),
+          onMouseLeave: () => setHover(false),
+          onFocus: () => setHover(true),
+          onBlur: () => setHover(false),
+          onClick: () => {
+            setMenuOpen(false)
+            openRenameDialog(sessionId, displayTitle)
+          },
+        },
+        h(RenameIcon),
+        h('span', { style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, t('rename.menu')),
+      )
+    }
+
+    /**
+     * The `shell.overlay` entry for the rename confirmation.
+     * @param props - locale and the save hop.
+     * @returns the open dialog, or null.
+     */
+    function RenameDialogEntry({ t, renameSession }) {
+      const request = useRenameRequest()
+      if (request === null) return null
+      return h(RenameDialog, { key: `${request.sessionId}:${request.nonce}`, request, t, renameSession })
+    }
+
+    /**
+     * One rename confirmation: edit the title, confirm to save, cancel leaves
+     * it untouched. Errors stay inline.
+     * @param props - request, locale, and the save hop.
+     * @returns the rename dialog.
+     */
+    function RenameDialog({ request, t, renameSession }) {
+      const [draft, setDraft] = React.useState(request.displayTitle)
+      const [saving, setSaving] = React.useState(false)
+      const [error, setError] = React.useState(null)
+      const cardRef = React.useRef(null)
+      const composingRef = React.useRef(false)
+      const trimmed = String(draft).trim()
+      const blocked = saving || trimmed === ''
+
+      React.useEffect(() => {
+        if (typeof document === 'undefined') return undefined
+        const onKeyDown = (event) => {
+          if (event.key !== 'Escape') return
+          event.preventDefault()
+          event.stopPropagation()
+          if (!saving) closeRenameDialog()
+        }
+        document.addEventListener('keydown', onKeyDown, true)
+        return () => document.removeEventListener('keydown', onKeyDown, true)
+      }, [saving])
+
+      const close = () => {
+        if (saving) return
+        closeRenameDialog()
+      }
+
+      const confirm = async () => {
+        if (blocked) {
+          if (trimmed === '') setError(t('rename.errorEmpty'))
+          return
+        }
+        setSaving(true)
+        setError(null)
+        try {
+          await renameSession(request.sessionId, trimmed)
+          setSaving(false)
+          closeRenameDialog()
+        } catch (reason) {
+          setSaving(false)
+          const message = reason instanceof Error ? reason.message : String(reason)
+          setError(message.includes('session/title-invalid') ? t('rename.errorInvalid') : t('rename.errorFailed'))
+        }
+      }
+
+      const titleText = request.displayTitle === '' ? t('dialog.untitled') : request.displayTitle
+
+      return h(
+        'div',
+        {
+          style: BACKDROP_STYLE,
+          onMouseDown: (event) => {
+            if (event.target === event.currentTarget) close()
+          },
+        },
+        h(
+          'div',
+          {
+            ref: cardRef,
+            role: 'dialog',
+            'aria-modal': 'true',
+            'aria-labelledby': 'rename-title',
+            'aria-describedby': 'rename-description',
+            style: CARD_STYLE,
+          },
+          h('h2', { id: 'rename-title', style: TITLE_STYLE }, t('rename.title')),
+          h('p', { id: 'rename-description', style: DESCRIPTION_STYLE }, t('rename.description').replace('{title}', titleText)),
+          h('input', {
+            value: draft,
+            'aria-label': t('rename.field'),
+            'data-autofocus': true,
+            disabled: saving,
+            autoFocus: true,
+            onChange: (event) => {
+              setDraft(event.target.value)
+              setError(null)
+            },
+            onFocus: (event) => event.target.select(),
+            onCompositionStart: () => { composingRef.current = true },
+            onCompositionEnd: () => { composingRef.current = false },
+            onKeyDown: (event) => {
+              if (event.key === 'Enter' && !composingRef.current) {
+                event.preventDefault()
+                confirm()
+              }
+            },
+            style: {
+              boxSizing: 'border-box',
+              width: '100%',
+              padding: '7px 10px',
+              borderRadius: '8px',
+              border: '0.5px solid var(--dsw-alias-border-l2)',
+              background: 'var(--dsw-alias-bg-base)',
+              color: 'var(--dsw-alias-label-primary)',
+              font: 'inherit',
+              fontSize: '13px',
+              lineHeight: '20px',
+            },
+          }),
+          error === null ? null : h('div', { role: 'alert', style: ERROR_STYLE }, error),
+          h(
+            'div',
+            { style: FOOTER_STYLE },
+            h(
+              'button',
+              {
+                type: 'button',
+                style: { ...BUTTON_SECONDARY, ...(saving ? BUTTON_DISABLED : {}) },
+                disabled: saving,
+                onClick: close,
+              },
+              t('cancel'),
+            ),
+            h(
+              'button',
+              {
+                type: 'button',
+                style: { ...BUTTON_PRIMARY, ...(blocked ? BUTTON_DISABLED : {}) },
+                disabled: blocked,
+                onClick: confirm,
+              },
+              saving ? t('rename.saving') : t('rename.confirm'),
+            ),
+          ),
+        ),
+      )
+    }
+
     /** One failure response as localized text. */
     function describeFailure(payload, t) {
       const code = typeof payload?.code === 'string' ? payload.code : ''
@@ -1418,6 +1656,11 @@ window.__ModuleLoader__.load({
         ctx.effect(() => ctx.locale.register(NS, DICTIONARIES))
         const uiWorkspace = ctx.get('uiWorkspace')
         const workspacesService = ctx.get('workspaces')
+        const sessionsService = ctx.get('sessions')
+        const renameSession = async (sessionId, title) => {
+          if (sessionsService === undefined) throw new Error('renaming is unavailable in this client')
+          await sessionsService.using(sessionId, { source: 'workspaceOperation' }, (reference) => reference.binding.session.rename(title))
+        }
         const pickDirectory =
           uiWorkspace !== undefined && typeof uiWorkspace.pickDirectory === 'function'
             ? () => uiWorkspace.pickDirectory()
@@ -1480,6 +1723,28 @@ window.__ModuleLoader__.load({
               locale: NS,
             },
             (slotProps) => h(MoveDialogEntry, { ...slotProps, onMoved, pickDirectory, createWorkspace }),
+          ),
+        )
+
+        ctx.slots.inject(MENU_SLOT, () =>
+          ctx.slots.register(
+            {
+              name: MENU_SLOT,
+              id: 'rename',
+              order: 200,
+              locale: NS,
+            },
+            RenameConversationMenuItem,
+          ),
+        )
+        ctx.slots.inject(OVERLAY_SLOT, () =>
+          ctx.slots.register(
+            {
+              name: OVERLAY_SLOT,
+              id: 'move-to-workspace.rename',
+              locale: NS,
+            },
+            (slotProps) => h(RenameDialogEntry, { ...slotProps, renameSession }),
           ),
         )
 

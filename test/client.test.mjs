@@ -16,6 +16,7 @@ const WORKSPACES = {
 
 function loadClient() {
   const registrations = []
+  const renameCalls = []
   const react = {
     createElement: (type, props, ...children) => ({ type, props: props ?? {}, children }),
     useState: (initial) => [initial, () => {}],
@@ -60,11 +61,20 @@ function loadClient() {
     get(key) {
       if (key === 'uiWorkspace') return { pickDirectory: async () => null, openSession() {} }
       if (key === 'workspaces') return { create: async () => ({ workspaceId: 'w3', sessionIds: [] }) }
+      if (key === 'sessions') {
+        return {
+          using: async (sessionId, _options, operation) => {
+            const call = { sessionId, title: null }
+            renameCalls.push(call)
+            await operation({ binding: { session: { rename: async (title) => { call.title = title } } } })
+          },
+        }
+      }
       return undefined
     },
   }
   module.apply(ctx)
-  return { registrations, react }
+  return { registrations, react, renameCalls }
 }
 
 function slotProps(overrides = {}) {
@@ -114,6 +124,13 @@ test('registers the session-row actions and both dialog overlays', () => {
   const deleteOverlay = registrations.find((entry) => entry.spec.id === 'move-to-workspace.delete')
   assert.ok(deleteOverlay, 'delete overlay registration exists')
   assert.equal(deleteOverlay.spec.name, 'shell.overlay')
+  const renameRows = registrations.filter((entry) => entry.spec.id === 'rename')
+  assert.equal(renameRows.length, 1, 'the confirming rename shadows the built-in row once')
+  assert.equal(renameRows[0].spec.name, 'sidebar.workspaces.session.menu.item')
+  assert.equal(renameRows[0].spec.order, 200)
+  const renameOverlay = registrations.find((entry) => entry.spec.id === 'move-to-workspace.rename')
+  assert.ok(renameOverlay, 'rename overlay registration exists')
+  assert.equal(renameOverlay.spec.name, 'shell.overlay')
 })
 
 test('the menu row is offered for ordinary rows and hidden for archived rows', () => {
@@ -143,6 +160,42 @@ test('the organize action opens a preview dialog', () => {
   const text = textOf(tree)
   assert.ok(text.includes('organize.title'), 'dialog title is rendered')
   assert.ok(text.includes('organize.loading'), 'dialog starts by loading the plan')
+})
+
+function findNode(node, predicate) {
+  if (node === undefined || node === null || node === false) return undefined
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = findNode(child, predicate)
+      if (found !== undefined) return found
+    }
+    return undefined
+  }
+  if (typeof node !== 'object') return undefined
+  if (predicate(node)) return node
+  return findNode(node.children, predicate)
+}
+
+test('the rename action opens a confirmation and saves the edited title', async () => {
+  const { registrations, renameCalls } = loadClient()
+  const menu = registrations.find((entry) => entry.spec.id === 'rename').component
+  const overlay = registrations.find((entry) => entry.spec.id === 'move-to-workspace.rename').component
+  const row = called(menu({ sessionId: 's1', displayTitle: 'Old title', useMenuOpenState: () => [false, () => {}], ...slotProps() }))
+  assert.equal(row.type, 'button')
+  row.props.onClick()
+  const tree = called(overlay(slotProps()))
+  const text = textOf(tree)
+  assert.ok(text.includes('rename.title'), 'rename dialog is rendered')
+  assert.ok(text.includes('rename.confirm'), 'rename confirmation button is rendered')
+  const input = findNode(tree, (node) => node.type === 'input')
+  assert.ok(input, 'title input is rendered')
+  assert.equal(input.props.value, 'Old title')
+  const confirm = findNode(tree, (node) => node.type === 'button' && textOf(node).includes('rename.confirm'))
+  assert.ok(confirm, 'confirm button found')
+  confirm.props.onClick()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(renameCalls.length, 1)
+  assert.deepEqual(renameCalls[0], { sessionId: 's1', title: 'Old title' })
 })
 
 test('the delete action asks for confirmation before removing anything', () => {

@@ -6,6 +6,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-10-25
+
+### Changed
+
+- The conversation row's **Rename** row is now provided by the plugin and always
+  opens a confirmation dialog: the title is prefilled and saved only after the
+  user confirms; Cancel leaves it untouched. It shadows the built-in Rename row
+  so the menu keeps a single entry. The built-in rename shortcut still opens the
+  native rename dialog.
+
 ## [0.1.5] - 2026-10-25
 
 ### Added

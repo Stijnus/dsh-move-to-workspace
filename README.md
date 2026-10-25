@@ -96,6 +96,13 @@ The publishing workflow is
 [`.github/workflows/release.yml`](.github/workflows/release.yml); the publisher
 configuration and release steps are in [RELEASING.md](RELEASING.md).
 
+## Rename a conversation
+
+The row menu's **Rename** row is provided by the plugin and opens a confirmation
+dialog with the current title prefilled. The new title is saved only after you
+confirm; Cancel leaves it untouched. An empty title is refused, and a successful
+rename updates the sidebar row immediately.
+
 ## Delete a conversation
 
 The row menu's **Delete conversation…** sits next to Archive and permanently
