@@ -48,7 +48,19 @@
           "session"
         ]
       },
-      "versions": []
+      "versions": [
+        {
+          "version": "0.1.0",
+          "publishTimestamp": 1792925406,
+          "source": {
+            "type": "npm",
+            "registry": "https://registry.npmjs.org/"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.3 <0.3.0-0"
+          }
+        }
+      ]
     }
   ]
 }
