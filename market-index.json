@@ -1,0 +1,54 @@
+{
+  "format": 1,
+  "title": {
+    "en": "Stijnus · DSH plugins",
+    "zh": "Stijnus · DSH 插件"
+  },
+  "description": {
+    "en": "Plugins by Stijnus for DeepSeek Harness.",
+    "zh": "Stijnus 的 DeepSeek Harness 插件。"
+  },
+  "metadata": {
+    "categories": {
+      "ui-experience": {
+        "title": {
+          "en": "UI & Experience",
+          "zh": "界面与体验"
+        }
+      }
+    },
+    "labels": {},
+    "sortKeys": {}
+  },
+  "plugins": [
+    {
+      "name": "dsh-move-to-workspace",
+      "title": {
+        "en": "Move to Workspace",
+        "zh": "移动到工作区"
+      },
+      "description": {
+        "en": "Move an existing conversation into another workspace, with a picker that can register a new workspace folder.",
+        "zh": "将已有会话移动到其他工作区，并可在选择器中新建工作区文件夹。"
+      },
+      "author": "stijnus",
+      "homepage": "https://github.com/Stijnus/dsh-move-to-workspace",
+      "repository": {
+        "url": "https://github.com/Stijnus/dsh-move-to-workspace"
+      },
+      "metadata": {
+        "category": "ui-experience",
+        "keywords": [
+          "dsh",
+          "dsh-plugin",
+          "deepseek-harness",
+          "workspace",
+          "conversation",
+          "move",
+          "session"
+        ]
+      },
+      "versions": []
+    }
+  ]
+}

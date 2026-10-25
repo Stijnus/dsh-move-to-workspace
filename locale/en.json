@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Move to workspace",
+    "description": "Adds \"Move to workspace…\" to a conversation's row menu: lists existing workspaces and can register a new folder, copies the full transcript into a new conversation bound to the chosen workspace, and archives the original."
+  }
+}
