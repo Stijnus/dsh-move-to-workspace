@@ -150,6 +150,7 @@ archived in their previous workspace.
 | `client.js` | Browser half: the session row action, the workspace picker dialog, and its create-a-workspace row. |
 | `locale/en.json`, `locale/zh.json` | Plugin Manager title/description. |
 | `test/` | Node test-runner checks for the Host contract, the endpoint guards, and the Client registrations. |
+| `scripts/registry-doctor.mjs` | Reports and repairs a workspace registry left with duplicate folder rows or conversations owned twice (§ [Repairing a broken registry](#repairing-a-broken-registry)). |
 | `market-index.json` | Format-1 market index for Discover; `versions` is filled after the first npm publication. |
 
 ## Endpoints
@@ -164,6 +165,29 @@ All endpoints are same-origin and require the owner session; failures answer
 | `POST /organize` | `{ mode: "apply", targets: [{ path, sessionIds }] }` | `{ ok, workspaces, sessions }` with per-workspace and per-conversation results. |
 | `POST /delete-session` | `{ sessionId }` | `{ ok, sessionId, removedLog, logDirectory }`; refuses live Sessions and subagent children. |
 
+
+## Repairing a broken registry
+
+**0.1.10 fixes this.** Versions 0.1.4–0.1.9 could register a second workspace
+for a folder that was already registered under another path spelling (a symlink
+next to its target), and the new row adopted the folder's conversations. One
+conversation owned by two workspaces makes the stored registry inconsistent, and
+`@deepseek-ai/dsh-workspace` refuses to load that state — the app then shows no
+workspaces and no conversations at all, with no error on screen.
+
+Conversations are still on disk. Quit the app (the Host rewrites the registry
+while it runs) and run:
+
+```sh
+node scripts/registry-doctor.mjs          # report only
+node scripts/registry-doctor.mjs --fix    # repair, after writing a backup
+```
+
+It collapses folders registered more than once onto the row registered under the
+resolved path, and leaves each conversation with exactly one owning workspace. It
+touches nothing else: no conversation log, projection cache, archive or pin state
+is changed. Reopen the app afterwards. The same check runs on demand:
+`npm run registry-doctor`.
 
 ## Limits
 
