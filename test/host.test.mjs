@@ -24,6 +24,7 @@ function fakeResponse() {
 
 function captureRoute({ admit = () => ({ rejection: 401 }) } = {}) {
   let route
+  const routes = []
   const ctx = {
     effect(fn) {
       const dispose = fn()
@@ -31,7 +32,8 @@ function captureRoute({ admit = () => ({ rejection: 401 }) } = {}) {
     },
     webServer: {
       register(value) {
-        route = value
+        routes.push(value)
+        if (value.path === '/move-to-workspace') route = value
         return () => {}
       },
     },
@@ -39,6 +41,7 @@ function captureRoute({ admit = () => ({ rejection: 401 }) } = {}) {
     logger: { warn() {} },
   }
   plugin.apply(ctx)
+  route.routes = routes
   return route
 }
 
@@ -77,11 +80,66 @@ test('rewriteSessionReferences retargets only the moved Session delivery marker'
   assert.equal(events[1].data.sessionId, 'session-old')
 })
 
-test('registers one exact endpoint', () => {
+test('planOrganization groups by project folder and infers from titles', () => {
+  const home = '/home/u'
+  const workspaces = [
+    { id: 'w1', title: 'default-workspace', path: '/home/u/dev/default-workspace' },
+    { id: 'w2', title: 'composer-predictions', path: '/home/u/dev/default-workspace/composer-predictions' },
+    { id: 'w3', title: 'werfregistratie-demo', path: '/home/u/GitHub/werfregistratie-demo' },
+  ]
+  const projects = [
+    { path: '/home/u/dev/default-workspace/composer-predictions', title: 'composer-predictions' },
+    { path: '/home/u/GitHub/dsh-moodboard', title: 'dsh-moodboard' },
+    { path: '/home/u/GitHub/werfregistratie-demo', title: 'werfregistratie-demo' },
+  ]
+  const sessions = [
+    { sessionId: 's1', title: 'Composer predictions tab completion', cwd: '/home/u/dev/default-workspace', origin: null, archived: false, workspaceId: 'w1' },
+    { sessionId: 's2', title: 'DSH moodboard plugin for agent style guides', cwd: '/home/u/dev/default-workspace', origin: null, archived: false, workspaceId: 'w1' },
+    { sessionId: 's3', title: 'Frontend review', cwd: '/home/u/GitHub/werfregistratie-demo', origin: null, archived: false, workspaceId: 'w3' },
+    { sessionId: 's4', title: 'New project chat', cwd: '/home/u/GitHub/new-project', origin: null, archived: false, workspaceId: null },
+    { sessionId: 's5', title: 'home chatter', cwd: '/home/u', origin: null, archived: false, workspaceId: null },
+    { sessionId: 's6', title: 'subagent child', cwd: '/home/u/dev/default-workspace', origin: 'subagent', archived: false, workspaceId: null },
+    { sessionId: 's7', title: 'Archived composer chat', cwd: '/home/u/dev/default-workspace', origin: null, archived: true, workspaceId: 'w1' },
+    { sessionId: 's8', title: 'Plugin notes', cwd: '/home/u/dev/default-workspace', origin: null, archived: false, workspaceId: 'w1' },
+  ]
+  const plan = plugin.planOrganization({ home, sessions, workspaces, projects })
+  assert.equal(plan.summary.considered, 6)
+  const byPath = Object.fromEntries(plan.targets.map((target) => [target.path, target]))
+  const composer = byPath['/home/u/dev/default-workspace/composer-predictions']
+  assert.ok(composer, 'composer target present')
+  assert.equal(composer.action, 'reuse')
+  assert.deepEqual(composer.sessions.map((session) => [session.sessionId, session.mode]), [['s1', 'move']])
+  const moodboard = byPath['/home/u/GitHub/dsh-moodboard']
+  assert.ok(moodboard, 'moodboard target present')
+  assert.equal(moodboard.action, 'create')
+  assert.deepEqual(moodboard.sessions.map((session) => [session.sessionId, session.mode]), [['s2', 'move']])
+  const fresh = byPath['/home/u/GitHub/new-project']
+  assert.ok(fresh, 'folder without a workspace becomes a create target')
+  assert.deepEqual(fresh.sessions.map((session) => [session.sessionId, session.mode]), [['s4', 'attach']])
+  const stayIds = plan.stays.map((entry) => entry.sessionId)
+  assert.ok(stayIds.includes('s3'), 'already grouped conversation stays')
+  assert.ok(stayIds.includes('s5'), 'generic home folder stays')
+  assert.ok(!stayIds.includes('s6') && !stayIds.includes('s7'), 'subagent and archived conversations are excluded')
+  for (const target of plan.targets) {
+    assert.notEqual(target.path, '/home/u/dev/default-workspace', 'a catch-all workspace is never a target')
+  }
+})
+
+test('tokenizeProjectText normalizes plural words and drops glue words', () => {
+  const tokens = plugin.tokenizeProjectText('DSH plugin for conversation workspaces')
+  assert.ok(tokens.has('conversation'))
+  assert.ok(tokens.has('workspace'))
+  assert.ok(!tokens.has('for'))
+})
+
+test('registers the move and organize endpoints', () => {
   const route = captureRoute()
-  assert.equal(route.kind, 'exact')
-  assert.equal(route.path, '/move-to-workspace')
+  assert.deepEqual(route.routes.map((candidate) => [candidate.kind, candidate.path]), [
+    ['exact', '/move-to-workspace'],
+    ['exact', '/organize'],
+  ])
   assert.equal(typeof route.handler, 'function')
+  assert.equal(typeof route.routes[1].handler, 'function')
 })
 
 test('refuses an unauthenticated call before reading the body', async () => {

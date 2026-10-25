@@ -96,6 +96,31 @@ The publishing workflow is
 [`.github/workflows/release.yml`](.github/workflows/release.yml); the publisher
 configuration and release steps are in [RELEASING.md](RELEASING.md).
 
+## Organize conversations
+
+Choose **Organize conversations…** from any conversation's row menu. The plugin
+builds a dry-run plan for every current (non-archived, non-subagent)
+conversation:
+
+- a conversation whose recorded folder is a project folder is grouped into a
+  workspace at that folder — reused when one is registered, created when not;
+- a conversation that started in a catch-all workspace (such as the default
+  workspace, which contains other workspaces) is matched by an unambiguous
+  title/folder-name match against project folders under that workspace and
+  under `~/Developer/GitHub`.
+
+The preview lists each workspace group with **CREATE** or **REUSE**, its path,
+the conversations it would receive, and whether each conversation is moved
+(copied, new session id) or attached in place (same folder, same id). Deselect
+any group before confirming; **nothing changes until you press Organize**.
+Conversations that are already correctly grouped, ambiguous matches, and
+generic locations like home or `/tmp` are counted as staying put rather than
+guessed.
+
+Applying uses the same archive-copy-attach operation as **Move to workspace…**,
+so moved conversations keep their history and title, and the originals are
+archived in their previous workspace.
+
 ## Files
 
 | File | Role |

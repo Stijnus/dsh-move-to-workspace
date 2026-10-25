@@ -6,6 +6,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-10-25
+
+### Added
+
+- **Organize conversations…** in every conversation's row menu. The Host builds
+  a dry-run preview of the workspaces it would create or reuse and the
+  conversations it would move; nothing changes until the user selects the
+  groups and confirms. Grouping uses each conversation's recorded project
+  folder, and falls back to an unambiguous title match against project folders
+  under catch-all workspaces and the user's GitHub folder. Already grouped,
+  ambiguous, and generic locations (home, /tmp) are reported as staying put.
+- `POST /organize` with `{ mode: 'plan' }` and `{ mode: 'apply', targets }` for
+  computing and applying the selection.
+
 ## [0.1.3] - 2026-10-25
 
 ### Fixed

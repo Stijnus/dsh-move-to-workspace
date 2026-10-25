@@ -91,15 +91,22 @@ function textOf(node) {
   return textOf(node.children)
 }
 
-test('registers the session-row action and the dialog overlay', () => {
+test('registers the session-row actions and both dialog overlays', () => {
   const { registrations } = loadClient()
   const menu = registrations.find((entry) => entry.spec.id === 'move-to-workspace')
-  assert.ok(menu, 'menu registration exists')
+  assert.ok(menu, 'move menu registration exists')
   assert.equal(menu.spec.name, 'sidebar.workspaces.session.menu.item')
   assert.equal(menu.spec.order, 350)
+  const organize = registrations.find((entry) => entry.spec.id === 'organize-conversations')
+  assert.ok(organize, 'organize menu registration exists')
+  assert.equal(organize.spec.name, 'sidebar.workspaces.session.menu.item')
+  assert.equal(organize.spec.order, 40)
   const overlay = registrations.find((entry) => entry.spec.id === 'move-to-workspace.dialog')
-  assert.ok(overlay, 'overlay registration exists')
+  assert.ok(overlay, 'move overlay registration exists')
   assert.equal(overlay.spec.name, 'shell.overlay')
+  const organizeOverlay = registrations.find((entry) => entry.spec.id === 'move-to-workspace.organize')
+  assert.ok(organizeOverlay, 'organize overlay registration exists')
+  assert.equal(organizeOverlay.spec.name, 'shell.overlay')
 })
 
 test('the menu row is offered for ordinary rows and hidden for archived rows', () => {
@@ -115,6 +122,20 @@ test('the menu row is offered for ordinary rows and hidden for archived rows', (
     ...slotProps({ useWorkspaces: (selector) => selector({ ...WORKSPACES, archivedSessionIds: ['s1'] }) }),
   })
   assert.equal(archived, null)
+})
+
+test('the organize action opens a preview dialog', () => {
+  const { registrations } = loadClient()
+  const menu = registrations.find((entry) => entry.spec.id === 'organize-conversations').component
+  const overlay = registrations.find((entry) => entry.spec.id === 'move-to-workspace.organize').component
+  const row = called(menu({ sessionId: 's1', displayTitle: 'Row', useMenuOpenState: () => [false, () => {}], ...slotProps() }))
+  assert.equal(row.type, 'button')
+  assert.equal(row.props.role, 'menuitem')
+  row.props.onClick()
+  const tree = called(overlay(slotProps()))
+  const text = textOf(tree)
+  assert.ok(text.includes('organize.title'), 'dialog title is rendered')
+  assert.ok(text.includes('organize.loading'), 'dialog starts by loading the plan')
 })
 
 test('clicking the row opens a dialog that can register a new workspace', () => {

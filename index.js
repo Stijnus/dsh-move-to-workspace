@@ -10,12 +10,15 @@
  * state on the copy. The browser half adds the sidebar action; this half owns
  * the operation and the one same-origin endpoint it calls.
  *
- * One endpoint:
+ * Two endpoints:
  * - `POST /move-to-workspace` — `{ sessionId, workspaceId }` → the moved Session.
+ * - `POST /organize` — `{ mode: 'plan' }` previews a bulk organization, and
+ *   `{ mode: 'apply', targets }` applies the selected workspace groups.
  */
 
 import { randomUUID } from 'node:crypto'
-import { realpath, stat } from 'node:fs/promises'
+import { readdir, realpath, stat } from 'node:fs/promises'
+import { homedir } from 'node:os'
 
 export const name = 'move-to-workspace'
 
@@ -24,8 +27,14 @@ export const inject = ['connection', 'webServer', 'workspaceRegistry', 'sessionP
 /** Same-origin endpoint the Client half posts to. */
 const ENDPOINT = '/move-to-workspace'
 
-/** One request carries two identifiers. */
+/** One move request carries two identifiers. */
 const MAX_BODY_BYTES = 8 * 1024
+
+/** Same-origin endpoint that previews and applies bulk organization. */
+const ORGANIZE_ENDPOINT = '/organize'
+
+/** Organization plans may carry many session identities. */
+const MAX_ORGANIZE_BODY_BYTES = 64 * 1024
 
 /** Stored plan for a failing request; `status` travels on the wire. */
 class MoveError extends Error {
@@ -57,6 +66,13 @@ export function apply(ctx) {
       handler: (request, response) => serveMove(ctx, request, response),
     }),
   )
+  ctx.effect(() =>
+    ctx.webServer.register({
+      kind: 'exact',
+      path: ORGANIZE_ENDPOINT,
+      handler: (request, response) => serveOrganize(ctx, request, response),
+    }),
+  )
 }
 
 /**
@@ -71,21 +87,7 @@ async function serveMove(ctx, request, response) {
       respond(response, 405, failure('method-not-allowed', 'Move requests must use POST.'))
       return
     }
-    const admission = ctx.connection.admit(request)
-    if ('rejection' in admission) {
-      const status = admission.rejection
-      respond(response, status, failure(status === 401 ? 'unauthorized' : 'forbidden', status === 401 ? 'This browser is not signed in.' : 'This caller may not move conversations.'))
-      return
-    }
-    if (admission.peer.principal.kind !== 'owner') {
-      respond(response, 403, failure('forbidden', 'Only the owner may move conversations.'))
-      return
-    }
-    const contentType = String(request.headers['content-type'] ?? '').split(';', 1)[0].trim().toLowerCase()
-    if (contentType !== 'application/json') {
-      respond(response, 415, failure('unsupported-media-type', 'Move requests must be JSON.'))
-      return
-    }
+    if (!admitOwnerJson(ctx, request, response)) return
     let body
     try {
       body = await readJsonBody(request)
@@ -359,6 +361,389 @@ function sanitizeActivity(activity) {
 }
 
 /**
+ * Admit one owner-scoped JSON request, answering the refusal itself.
+ * @param ctx - host context.
+ * @param request - incoming HTTP request.
+ * @param response - outgoing HTTP response.
+ * @returns whether the caller may continue.
+ */
+function admitOwnerJson(ctx, request, response) {
+  const admission = ctx.connection.admit(request)
+  if ('rejection' in admission) {
+    const status = admission.rejection
+    respond(response, status, failure(status === 401 ? 'unauthorized' : 'forbidden', status === 401 ? 'This browser is not signed in.' : 'This caller may not change conversations.'))
+    return false
+  }
+  if (admission.peer.principal.kind !== 'owner') {
+    respond(response, 403, failure('forbidden', 'Only the owner may change conversations.'))
+    return false
+  }
+  const contentType = String(request.headers['content-type'] ?? '').split(';', 1)[0].trim().toLowerCase()
+  if (contentType !== 'application/json') {
+    respond(response, 415, failure('unsupported-media-type', 'Requests must be JSON.'))
+    return false
+  }
+  return true
+}
+
+/**
+ * Answer one organize request. `plan` computes the preview; `apply` creates or
+ * reuses the selected workspace groups and moves their conversations.
+ * @param ctx - host context.
+ * @param request - incoming HTTP request.
+ * @param response - outgoing HTTP response.
+ */
+async function serveOrganize(ctx, request, response) {
+  try {
+    if (request.method !== 'POST') {
+      respond(response, 405, failure('method-not-allowed', 'Organize requests must use POST.'))
+      return
+    }
+    if (!admitOwnerJson(ctx, request, response)) return
+    let body
+    try {
+      body = await readJsonBody(request, MAX_ORGANIZE_BODY_BYTES)
+    } catch {
+      respond(response, 400, failure('invalid-body', 'The request body is not valid JSON.'))
+      return
+    }
+    if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+      respond(response, 400, failure('invalid-body', 'The request body must be a JSON object.'))
+      return
+    }
+    if (body.mode === 'plan') {
+      const plan = await planFromHost(ctx)
+      respond(response, 200, { ok: true, plan })
+      return
+    }
+    if (body.mode !== 'apply' || !Array.isArray(body.targets)) {
+      respond(response, 400, failure('invalid-body', 'Use mode "plan" or mode "apply" with a targets array.'))
+      return
+    }
+    const result = await applyOrganization(ctx, body.targets)
+    respond(response, 200, { ok: true, ...result })
+  } catch (error) {
+    if (error instanceof MoveError) {
+      respond(response, error.status, failure(error.code, error.message, error.details))
+      return
+    }
+    ctx.logger.warn('move-to-workspace: organize failed unexpectedly: ' + describeError(error))
+    respond(response, 500, failure('organize-failed', 'Organizing conversations failed unexpectedly.'))
+  }
+}
+
+/**
+ * Gather the live facts the planner needs and build a preview.
+ * @param ctx - host context.
+ * @returns the organization plan.
+ */
+async function planFromHost(ctx) {
+  const home = homedir()
+  const registry = ctx.workspaceRegistry
+  const cache = ctx.get('sessionProjectionCache')
+  const workspaces = registry
+    .list()
+    .map((workspace) => ({
+      id: String(workspace.id),
+      title: workspace.title,
+      path: workspace.path,
+      sessionIds: workspace.sessionIds.map(String),
+    }))
+  const accounted = new Map()
+  for (const workspace of workspaces) for (const sessionId of workspace.sessionIds) accounted.set(sessionId, workspace)
+  const records = await ctx.sessionQuery.listSessions()
+  const sessions = []
+  for (const record of records) {
+    const header = record.header
+    const sessionId = String(header.id)
+    const cwd = typeof header.cwd === 'string' ? await realpath(header.cwd).catch(() => header.cwd) : undefined
+    let title = ''
+    if (cache !== undefined) {
+      try {
+        title = String(cache.cachedSnapshot?.(header)?.values?.title ?? '')
+      } catch {
+        title = ''
+      }
+    }
+    const workspace = accounted.get(sessionId)
+    sessions.push({
+      sessionId,
+      title,
+      cwd,
+      origin: header.origin ?? null,
+      archived: registry.archivedSessionIds.includes(sessionId),
+      workspaceId: workspace === undefined ? null : String(workspace.id),
+    })
+  }
+  const projects = await discoverProjects(workspaces, home)
+  return {
+    ...planOrganization({ home, sessions, workspaces, projects }),
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+/**
+ * Discover candidate project folders: project directories under the user's
+ * GitHub folder and under every catch-all workspace (a workspace that contains
+ * other registered workspaces, such as the default workspace).
+ * @param workspaces - registered workspace rows.
+ * @param home - user home directory.
+ * @returns project candidates with display titles.
+ */
+async function discoverProjects(workspaces, home) {
+  const catchAll = workspaces
+    .filter((workspace) => workspaces.some((other) => other.id !== workspace.id && other.path.startsWith(workspace.path + '/')))
+    .map((workspace) => workspace.path)
+  const roots = new Set([`${home}/Developer/GitHub`, ...catchAll])
+  const projects = []
+  const seen = new Set()
+  for (const root of roots) {
+    const entries = await readdir(root, { withFileTypes: true }).catch(() => [])
+    for (const entry of entries.slice(0, 300)) {
+      if (!entry.isDirectory() || entry.name.startsWith('.') || entry.name === 'node_modules') continue
+      const candidate = await realpath(`${root}/${entry.name}`).catch(() => undefined)
+      if (candidate === undefined || seen.has(candidate)) continue
+      seen.add(candidate)
+      projects.push({ path: candidate, title: entry.name })
+    }
+  }
+  return projects
+}
+
+/** Words that carry no project identity. */
+const PROJECT_STOPWORDS = new Set(['the', 'and', 'for', 'to', 'of', 'a', 'an', 'in', 'on', 'with', 'my', 'our', 'is', 'it', 'this', 'that'])
+/** Directories that are containers, not projects. */
+const GENERIC_DIRECTORIES = new Set(['/', '/tmp', '/private/tmp'])
+
+/** Normalize a word for loose project-name matching. */
+function normalizeProjectToken(token) {
+  const lower = token.toLowerCase()
+  if (lower.endsWith('ies') && lower.length > 4) return lower.slice(0, -3) + 'y'
+  if (lower.endsWith('s') && lower.length > 4) return lower.slice(0, -1)
+  return lower
+}
+
+/**
+ * Distinct normalized words of a conversation title or folder name.
+ * @param text - title or name.
+ * @returns normalized word set.
+ */
+export function tokenizeProjectText(text) {
+  const tokens = new Set()
+  for (const raw of String(text ?? '').toLowerCase().split(/[^a-z0-9]+/)) {
+    if (raw.length < 3 || PROJECT_STOPWORDS.has(raw)) continue
+    tokens.add(normalizeProjectToken(raw))
+  }
+  return tokens
+}
+
+/** Whether a directory is a generic container rather than a project. */
+function isGenericDirectory(directory, home) {
+  return directory === home || GENERIC_DIRECTORIES.has(directory)
+}
+
+/** Last path segment of a directory. */
+function titleFromPath(targetPath) {
+  const segments = String(targetPath).split('/').filter((segment) => segment !== '')
+  return segments.at(-1) ?? targetPath
+}
+
+/**
+ * Score one project candidate against a conversation title.
+ * @param title - conversation title.
+ * @param candidate - project path and display title.
+ * @returns number of shared words, plus a bonus for the exact folder name.
+ */
+function projectScore(title, candidate) {
+  const textTokens = tokenizeProjectText(title)
+  if (textTokens.size === 0) return 0
+  const nameText = (titleFromPath(candidate.path) + ' ' + String(candidate.title ?? '')).toLowerCase()
+  let score = 0
+  for (const token of tokenizeProjectText(nameText)) if (textTokens.has(token)) score += 1
+  const normalizedName = nameText.replace(/[^a-z0-9]+/g, ' ').trim()
+  const normalizedTitle = String(title).toLowerCase().replace(/[^a-z0-9]+/g, ' ')
+  if (normalizedName !== '' && normalizedTitle.includes(normalizedName)) score += 3
+  return score
+}
+
+/**
+ * Best unambiguous project for one conversation title.
+ * @param title - conversation title.
+ * @param candidates - project candidates.
+ * @param excludedPaths - project paths that are not valid targets for this session.
+ * @returns the winning candidate, or undefined for no match and for ties.
+ */
+function bestProjectMatch(title, candidates, excludedPaths) {
+  const scored = candidates
+    .filter((candidate) => !excludedPaths.has(candidate.path))
+    .map((candidate) => ({ candidate, score: projectScore(title, candidate) }))
+    .filter((entry) => entry.score > 0)
+    .sort((left, right) => right.score - left.score)
+  if (scored.length === 0) return undefined
+  const top = scored.filter((entry) => entry.score === scored[0].score)
+  return new Set(top.map((entry) => entry.candidate.path)).size === 1 ? scored[0].candidate : undefined
+}
+
+/**
+ * Build the organization preview. Pure: the caller supplies sessions, existing
+ * workspaces, and discovered project folders, so every rule is testable.
+ * @param input - home directory, sessions, workspaces, and project candidates.
+ * @returns workspace groups to create/reuse, sessions that stay put, and counts.
+ */
+export function planOrganization(input) {
+  const home = input.home
+  const sessions = input.sessions
+  const workspaces = input.workspaces
+  const workspaceById = new Map(workspaces.map((workspace) => [workspace.id, workspace]))
+  const workspaceByPath = new Map(workspaces.map((workspace) => [workspace.path, workspace]))
+  const catchAllPaths = new Set(
+    workspaces
+      .filter((workspace) => workspaces.some((other) => other.id !== workspace.id && other.path.startsWith(workspace.path + '/')))
+      .map((workspace) => workspace.path),
+  )
+  const candidates = []
+  const seenCandidates = new Set()
+  for (const candidate of [...input.projects, ...workspaces]) {
+    if (typeof candidate.path !== 'string' || seenCandidates.has(candidate.path)) continue
+    if (catchAllPaths.has(candidate.path) || isGenericDirectory(candidate.path, home)) continue
+    seenCandidates.add(candidate.path)
+    candidates.push({ path: candidate.path, title: String(candidate.title ?? titleFromPath(candidate.path)) })
+  }
+  const groups = new Map()
+  const stays = []
+  const addSession = (target, session, mode) => {
+    const existing = workspaceByPath.get(target.path)
+    const group = groups.get(target.path) ?? {
+      path: target.path,
+      title: existing === undefined ? (target.title ?? titleFromPath(target.path)) : existing.title,
+      workspaceId: existing === undefined ? null : String(existing.id),
+      action: existing === undefined ? 'create' : 'reuse',
+      sessions: [],
+    }
+    group.sessions.push({
+      sessionId: session.sessionId,
+      title: session.title ?? '',
+      cwd: session.cwd ?? null,
+      mode,
+      currentWorkspace: session.workspaceId === null || session.workspaceId === undefined
+        ? null
+        : { id: session.workspaceId, title: workspaceById.get(session.workspaceId)?.title ?? null },
+    })
+    groups.set(target.path, group)
+  }
+  const eligible = sessions.filter((session) => session.archived !== true && session.origin !== 'subagent')
+  for (const session of eligible) {
+    if (typeof session.cwd !== 'string' || session.cwd === '') {
+      stays.push({ sessionId: session.sessionId, title: session.title ?? '', reason: 'no-folder' })
+      continue
+    }
+    const cwd = session.cwd
+    const current = session.workspaceId === null || session.workspaceId === undefined ? undefined : workspaceById.get(session.workspaceId)
+    if (current !== undefined && current.path === cwd) {
+      if (!catchAllPaths.has(current.path)) {
+        stays.push({ sessionId: session.sessionId, title: session.title ?? '', reason: 'already-grouped', workspace: current.title })
+        continue
+      }
+      const match = bestProjectMatch(session.title ?? '', candidates, new Set([cwd, ...catchAllPaths]))
+      if (match === undefined) {
+        stays.push({ sessionId: session.sessionId, title: session.title ?? '', reason: 'no-project-match', workspace: current.title })
+        continue
+      }
+      addSession(match, session, 'move')
+      continue
+    }
+    if (!isGenericDirectory(cwd, home)) {
+      addSession(workspaceByPath.get(cwd) ?? { path: cwd, title: titleFromPath(cwd) }, session, 'attach')
+      continue
+    }
+    const match = bestProjectMatch(session.title ?? '', candidates, new Set(catchAllPaths))
+    if (match === undefined) {
+      stays.push({ sessionId: session.sessionId, title: session.title ?? '', reason: 'generic-folder' })
+      continue
+    }
+    addSession(match, session, 'move')
+  }
+  const targets = [...groups.values()]
+    .map((group) => ({ ...group, sessions: group.sessions.sort((left, right) => String(left.title).localeCompare(String(right.title))) }))
+    .sort((left, right) => {
+      if (left.action !== right.action) return left.action === 'create' ? -1 : 1
+      return right.sessions.length - left.sessions.length || left.title.localeCompare(right.title)
+    })
+  const moves = targets.reduce((sum, group) => sum + group.sessions.length, 0)
+  return {
+    targets,
+    stays,
+    summary: {
+      considered: eligible.length,
+      moves,
+      targets: targets.length,
+      create: targets.filter((group) => group.action === 'create').length,
+      reuse: targets.filter((group) => group.action === 'reuse').length,
+      stays: stays.length,
+    },
+  }
+}
+
+/**
+ * Apply the selected workspace groups: register each folder, then move every
+ * selected conversation with the same archive-copy-attach operation as the
+ * single-conversation endpoint. Failures stay isolated per conversation.
+ * @param ctx - host context.
+ * @param targets - selected `{ path, sessionIds }` groups.
+ * @returns per-workspace and per-session results.
+ */
+async function applyOrganization(ctx, targets) {
+  const registry = ctx.workspaceRegistry
+  const workingDirectoryResults = []
+  const sessionResults = []
+  for (const target of targets) {
+    if (target === null || typeof target !== 'object' || typeof target.path !== 'string' || !Array.isArray(target.sessionIds)) {
+      workingDirectoryResults.push({ path: null, ok: false, error: 'invalid-target' })
+      continue
+    }
+    const canonical = await realpath(target.path).catch(() => undefined)
+    if (canonical === undefined) {
+      workingDirectoryResults.push({ path: target.path, ok: false, error: 'missing-folder' })
+      continue
+    }
+    const info = await stat(canonical).catch(() => undefined)
+    if (info === undefined || !info.isDirectory()) {
+      workingDirectoryResults.push({ path: target.path, ok: false, error: 'not-a-directory' })
+      continue
+    }
+    const existed = registry.list().some((workspace) => workspace.path === canonical)
+    let workspace
+    try {
+      workspace = await registry.create(canonical)
+    } catch (error) {
+      workingDirectoryResults.push({ path: canonical, ok: false, error: describeError(error) })
+      continue
+    }
+    workingDirectoryResults.push({ path: canonical, ok: true, workspaceId: String(workspace.id), title: workspace.title, created: !existed })
+    for (const sessionId of target.sessionIds) {
+      if (typeof sessionId !== 'string' || sessionId === '') continue
+      if (workspace.sessionIds.includes(sessionId)) {
+        sessionResults.push({ workspaceId: String(workspace.id), sessionId, ok: true, alreadyInPlace: true })
+        continue
+      }
+      try {
+        const result = await moveSession(ctx, sessionId, String(workspace.id))
+        sessionResults.push({ workspaceId: String(workspace.id), sessionId, ok: true, ...result })
+      } catch (error) {
+        sessionResults.push({
+          workspaceId: String(workspace.id),
+          sessionId,
+          ok: false,
+          code: error instanceof MoveError ? error.code : 'move-failed',
+          error: describeError(error),
+        })
+      }
+    }
+  }
+  return { workspaces: workingDirectoryResults, sessions: sessionResults }
+}
+
+/**
  * Answer one JSON failure.
  * @param code - machine-readable failure code.
  * @param message - developer-facing explanation.
@@ -384,7 +769,7 @@ function respond(response, status, payload) {
  * @param request - incoming request.
  * @returns the parsed body.
  */
-function readJsonBody(request) {
+function readJsonBody(request, limit = MAX_BODY_BYTES) {
   return new Promise((resolve, reject) => {
     const chunks = []
     let size = 0
@@ -398,7 +783,7 @@ function readJsonBody(request) {
     request.on('data', (chunk) => {
       if (settled) return
       size += chunk.length
-      if (size > MAX_BODY_BYTES) {
+      if (size > limit) {
         fail(new Error('body-too-large'))
         return
       }

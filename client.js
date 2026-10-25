@@ -18,6 +18,7 @@ window.__ModuleLoader__.load({
 
     const NS = 'move-to-workspace'
     const ENDPOINT = '/move-to-workspace'
+    const ORGANIZE_ENDPOINT = '/organize'
     const MENU_SLOT = 'sidebar.workspaces.session.menu.item'
     const OVERLAY_SLOT = 'shell.overlay'
     const MENU_ORDER = 350
@@ -25,6 +26,27 @@ window.__ModuleLoader__.load({
     const DICTIONARIES = {
       en: {
         'menu.label': 'Move to workspace…',
+        'organize.menu': 'Organize conversations…',
+        'organize.title': 'Organize conversations',
+        'organize.description':
+          'Group current conversations into project workspaces by their folders and titles. Review the plan below — nothing moves until you confirm.',
+        'organize.loading': 'Scanning conversations…',
+        'organize.empty': 'Everything is already organized.',
+        'organize.summary':
+          '{considered} conversations · {moves} to move · {create} workspace(s) to create · {reuse} to reuse · {stays} stay put',
+        'organize.create': 'CREATE',
+        'organize.reuse': 'REUSE',
+        'organize.move': 'move',
+        'organize.attach': 'attach',
+        'organize.sessions': '{count} conversations',
+        'organize.stays': '{count} conversations stay where they are.',
+        'organize.selectAll': 'Select all',
+        'organize.confirm': 'Organize {count}',
+        'organize.applying': 'Organizing…',
+        'organize.noSelection': 'Select at least one workspace.',
+        'organize.applyFailed': '{count} conversation(s) could not be moved: {detail}',
+        'organize.planFailed': 'The organization plan could not be loaded.',
+        'organize.done': 'Organized {count} conversations.',
         'dialog.title': 'Move to workspace',
         'dialog.description':
           'Copy “{title}” into another workspace. It continues there as a new conversation; the original is archived and can be restored.',
@@ -65,6 +87,27 @@ window.__ModuleLoader__.load({
       },
       zh: {
         'menu.label': '移动到工作区…',
+        'organize.menu': '自动整理会话…',
+        'organize.title': '自动整理会话',
+        'organize.description':
+          '按文件夹与标题将当前会话归入对应的项目工作区。请先检查下面的计划，确认之前不会移动任何内容。',
+        'organize.loading': '正在扫描会话…',
+        'organize.empty': '所有会话都已整理好。',
+        'organize.summary':
+          '{considered} 个会话 · {moves} 个将移动 · 新建 {create} 个工作区 · 复用 {reuse} 个 · {stays} 个保持不变',
+        'organize.create': '新建',
+        'organize.reuse': '复用',
+        'organize.move': '移动',
+        'organize.attach': '直接归入',
+        'organize.sessions': '{count} 个会话',
+        'organize.stays': '{count} 个会话保持原位。',
+        'organize.selectAll': '全选',
+        'organize.confirm': '整理 {count} 个',
+        'organize.applying': '正在整理…',
+        'organize.noSelection': '请至少选择一个工作区。',
+        'organize.applyFailed': '{count} 个会话无法移动：{detail}',
+        'organize.planFailed': '无法加载整理计划。',
+        'organize.done': '已整理 {count} 个会话。',
         'dialog.title': '移动到工作区',
         'dialog.description': '将“{title}”复制到另一个工作区。它会在那里作为新会话继续，原会话会被归档并可恢复。',
         'dialog.untitled': '此会话',
@@ -640,6 +683,453 @@ window.__ModuleLoader__.load({
       )
     }
 
+    // The organize request lives at module scope for the same reason as the
+    // move dialog: the row menu unmounts with its popup.
+    let organizeOpen = false
+    const organizeListeners = new Set()
+
+    function openOrganizeDialog() {
+      organizeOpen = true
+      for (const listener of organizeListeners) listener(true)
+    }
+
+    function closeOrganizeDialog() {
+      organizeOpen = false
+      for (const listener of organizeListeners) listener(false)
+    }
+
+    function useOrganizeOpen() {
+      const [open, setOpen] = React.useState(organizeOpen)
+      React.useEffect(() => {
+        organizeListeners.add(setOpen)
+        setOpen(organizeOpen)
+        return () => {
+          organizeListeners.delete(setOpen)
+        }
+      }, [])
+      return open
+    }
+
+    const ORGANIZE_SUMMARY_STYLE = {
+      margin: 0,
+      fontSize: '12px',
+      lineHeight: '18px',
+      color: 'var(--dsw-alias-label-secondary)',
+    }
+    const ORGANIZE_LIST_STYLE = {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '6px',
+      overflowY: 'auto',
+      maxHeight: '44vh',
+      paddingRight: '2px',
+    }
+    const ORGANIZE_GROUP_STYLE = {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '3px',
+      padding: '8px 10px',
+      borderRadius: '8px',
+      border: '0.5px solid var(--dsw-alias-border-l2)',
+    }
+    const ORGANIZE_GROUP_HEADER_STYLE = {
+      display: 'flex',
+      alignItems: 'center',
+      gap: '8px',
+      cursor: 'pointer',
+      minWidth: 0,
+    }
+    const ORGANIZE_BADGE_STYLE = {
+      flex: 'none',
+      fontSize: '10px',
+      lineHeight: '16px',
+      letterSpacing: '0.04em',
+      padding: '0 5px',
+      borderRadius: '999px',
+      border: '0.5px solid var(--dsw-alias-border-l2)',
+      color: 'var(--dsw-alias-label-secondary)',
+    }
+    const ORGANIZE_BADGE_CREATE_STYLE = {
+      color: 'var(--dsw-alias-brand-primary)',
+      borderColor: 'var(--dsw-alias-brand-primary)',
+    }
+    const ORGANIZE_GROUP_TITLE_STYLE = {
+      fontSize: '13px',
+      lineHeight: '20px',
+      fontWeight: 500,
+      minWidth: 0,
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap',
+    }
+    const ORGANIZE_GROUP_COUNT_STYLE = {
+      marginLeft: 'auto',
+      flex: 'none',
+      fontSize: '12px',
+      lineHeight: '18px',
+      color: 'var(--dsw-alias-label-secondary)',
+    }
+    const ORGANIZE_GROUP_PATH_STYLE = {
+      fontSize: '11px',
+      lineHeight: '16px',
+      color: 'var(--dsw-alias-label-secondary)',
+      opacity: 0.7,
+      paddingLeft: '24px',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap',
+    }
+    const ORGANIZE_SESSION_STYLE = {
+      display: 'flex',
+      alignItems: 'baseline',
+      gap: '6px',
+      paddingLeft: '24px',
+      fontSize: '12px',
+      lineHeight: '18px',
+      color: 'var(--dsw-alias-label-secondary)',
+    }
+    const ORGANIZE_MODE_STYLE = {
+      flex: 'none',
+      fontSize: '10px',
+      lineHeight: '15px',
+      padding: '0 5px',
+      borderRadius: '999px',
+      border: '0.5px solid var(--dsw-alias-border-l2)',
+      color: 'var(--dsw-alias-label-secondary)',
+    }
+    const ORGANIZE_STAYS_STYLE = {
+      margin: 0,
+      fontSize: '12px',
+      lineHeight: '18px',
+      color: 'var(--dsw-alias-label-secondary)',
+      opacity: 0.85,
+    }
+    const ORGANIZE_SELECT_ALL_STYLE = {
+      display: 'flex',
+      alignItems: 'center',
+      gap: '8px',
+      fontSize: '12px',
+      lineHeight: '18px',
+      color: 'var(--dsw-alias-label-secondary)',
+      cursor: 'pointer',
+    }
+
+    /** Stacked-layers glyph for the organize row. */
+    function OrganizeIcon() {
+      return h(
+        'svg',
+        {
+          width: 16,
+          height: 16,
+          viewBox: '0 0 16 16',
+          fill: 'none',
+          stroke: 'currentColor',
+          strokeWidth: 1.3,
+          strokeLinecap: 'round',
+          strokeLinejoin: 'round',
+          'aria-hidden': true,
+          style: { display: 'block', flex: 'none' },
+        },
+        h('path', { d: 'M8 2.5 13.5 5 8 7.5 2.5 5z' }),
+        h('path', { d: 'M2.5 8 8 10.5 13.5 8' }),
+        h('path', { d: 'M2.5 11 8 13.5 13.5 11' }),
+      )
+    }
+
+    /**
+     * Global sidebar action: raise the organization preview.
+     * @param props - menu open state and locale.
+     * @returns the menu row.
+     */
+    function OrganizeConversationsMenuItem({ useMenuOpenState, t }) {
+      const [, setMenuOpen] = useMenuOpenState()
+      const [hover, setHover] = React.useState(false)
+      return h(
+        'button',
+        {
+          type: 'button',
+          role: 'menuitem',
+          style: hover ? { ...MENU_ITEM_STYLE, ...MENU_ITEM_HOVER_STYLE } : MENU_ITEM_STYLE,
+          onMouseEnter: () => setHover(true),
+          onMouseLeave: () => setHover(false),
+          onFocus: () => setHover(true),
+          onBlur: () => setHover(false),
+          onClick: () => {
+            setMenuOpen(false)
+            openOrganizeDialog()
+          },
+        },
+        h(OrganizeIcon),
+        h('span', { style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, t('organize.menu')),
+      )
+    }
+
+    /**
+     * The `shell.overlay` entry for the organization preview.
+     * @param props - locale.
+     * @returns the open dialog, or null.
+     */
+    function OrganizeDialogEntry({ t }) {
+      const open = useOrganizeOpen()
+      if (!open) return null
+      return h(OrganizeDialog, { t })
+    }
+
+    /**
+     * Fetch the dry-run plan, let the user select workspace groups, then apply
+     * the selection. Nothing changes until Organize is confirmed.
+     * @param props - locale.
+     * @returns the organization dialog.
+     */
+    function OrganizeDialog({ t }) {
+      const [loading, setLoading] = React.useState(true)
+      const [plan, setPlan] = React.useState(null)
+      const [selected, setSelected] = React.useState(() => new Set())
+      const [applying, setApplying] = React.useState(false)
+      const [error, setError] = React.useState(null)
+      const cardRef = React.useRef(null)
+
+      React.useEffect(() => {
+        const controller = typeof AbortController === 'function' ? new AbortController() : undefined
+        let cancelled = false
+        ;(async () => {
+          try {
+            const response = await fetch(ORGANIZE_ENDPOINT, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ mode: 'plan' }),
+              ...(controller === undefined ? {} : { signal: controller.signal }),
+            })
+            const payload = await response.json().catch(() => null)
+            if (cancelled) return
+            if (!response.ok || payload?.ok !== true) {
+              setError(t('organize.planFailed'))
+              setLoading(false)
+              return
+            }
+            setPlan(payload.plan)
+            setSelected(new Set((payload.plan?.targets ?? []).map((target) => target.path)))
+            setLoading(false)
+          } catch (reason) {
+            if (cancelled) return
+            setError(t('organize.planFailed'))
+            setLoading(false)
+          }
+        })()
+        return () => {
+          cancelled = true
+          controller?.abort()
+        }
+      }, [])
+
+      React.useEffect(() => {
+        if (applying || typeof document === 'undefined') return undefined
+        const onKeyDown = (event) => {
+          if (event.key !== 'Escape') return
+          event.preventDefault()
+          event.stopPropagation()
+          closeOrganizeDialog()
+        }
+        document.addEventListener('keydown', onKeyDown, true)
+        return () => document.removeEventListener('keydown', onKeyDown, true)
+      }, [applying])
+
+      const close = () => {
+        if (applying) return
+        closeOrganizeDialog()
+      }
+
+      const targets = plan?.targets ?? []
+      const selectedTargets = targets.filter((target) => selected.has(target.path))
+      const selectedSessions = selectedTargets.reduce((sum, target) => sum + target.sessions.length, 0)
+      const allSelected = targets.length > 0 && selectedTargets.length === targets.length
+
+      const toggle = (targetPath) => {
+        setSelected((current) => {
+          const next = new Set(current)
+          if (next.has(targetPath)) next.delete(targetPath)
+          else next.add(targetPath)
+          return next
+        })
+      }
+
+      const toggleAll = () => {
+        setSelected(allSelected ? new Set() : new Set(targets.map((target) => target.path)))
+      }
+
+      const apply = async () => {
+        if (applying) return
+        if (selectedTargets.length === 0) {
+          setError(t('organize.noSelection'))
+          return
+        }
+        setApplying(true)
+        setError(null)
+        try {
+          const response = await fetch(ORGANIZE_ENDPOINT, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              mode: 'apply',
+              targets: selectedTargets.map((target) => ({
+                path: target.path,
+                sessionIds: target.sessions.map((session) => session.sessionId),
+              })),
+            }),
+          })
+          const payload = await response.json().catch(() => null)
+          if (!response.ok || payload?.ok !== true) {
+            setApplying(false)
+            setError(t('organize.planFailed'))
+            return
+          }
+          const failures = (payload.sessions ?? []).filter((session) => session.ok !== true)
+          if (failures.length > 0) {
+            setApplying(false)
+            const detail = failures.slice(0, 3).map((session) => session.code ?? 'failed').join(', ')
+            setError(t('organize.applyFailed').replace('{count}', String(failures.length)).replace('{detail}', detail))
+            return
+          }
+          setApplying(false)
+          closeOrganizeDialog()
+        } catch (reason) {
+          setApplying(false)
+          setError(t('error.network'))
+        }
+      }
+
+      const sessionCountLabel = (count) => t('organize.sessions').replace('{count}', String(count))
+
+      return h(
+        'div',
+        {
+          style: BACKDROP_STYLE,
+          onMouseDown: (event) => {
+            if (event.target === event.currentTarget) close()
+          },
+        },
+        h(
+          'div',
+          {
+            ref: cardRef,
+            role: 'dialog',
+            'aria-modal': 'true',
+            'aria-labelledby': 'organize-title',
+            'aria-describedby': 'organize-description',
+            style: { ...CARD_STYLE, width: 'min(620px, calc(100vw - 32px))' },
+          },
+          h('h2', { id: 'organize-title', style: TITLE_STYLE }, t('organize.title')),
+          h('p', { id: 'organize-description', style: DESCRIPTION_STYLE }, t('organize.description')),
+          loading ? h('p', { style: DESCRIPTION_STYLE }, t('organize.loading')) : null,
+          !loading && plan === null ? h('div', { role: 'alert', style: ERROR_STYLE }, error ?? t('organize.planFailed')) : null,
+          !loading && plan !== null
+            ? h(
+                'div',
+                { style: { display: 'flex', flexDirection: 'column', gap: '10px', minHeight: 0 } },
+                h(
+                  'p',
+                  { style: ORGANIZE_SUMMARY_STYLE },
+                  t('organize.summary')
+                    .replace('{considered}', String(plan.summary.considered))
+                    .replace('{moves}', String(plan.summary.moves))
+                    .replace('{create}', String(plan.summary.create))
+                    .replace('{reuse}', String(plan.summary.reuse))
+                    .replace('{stays}', String(plan.summary.stays)),
+                ),
+                targets.length === 0
+                  ? h('p', { style: EMPTY_STYLE }, t('organize.empty'))
+                  : h(
+                      'label',
+                      { style: ORGANIZE_SELECT_ALL_STYLE },
+                      h('input', {
+                        type: 'checkbox',
+                        checked: allSelected,
+                        disabled: applying,
+                        onChange: toggleAll,
+                        style: { flex: 'none', accentColor: 'var(--dsw-alias-brand-primary)' },
+                      }),
+                      h('span', null, t('organize.selectAll')),
+                    ),
+                targets.length === 0
+                  ? null
+                  : h(
+                      'div',
+                      { style: ORGANIZE_LIST_STYLE },
+                      targets.map((target) =>
+                        h(
+                          'div',
+                          { key: target.path, style: ORGANIZE_GROUP_STYLE },
+                          h(
+                            'label',
+                            { style: ORGANIZE_GROUP_HEADER_STYLE },
+                            h('input', {
+                              type: 'checkbox',
+                              checked: selected.has(target.path),
+                              disabled: applying,
+                              onChange: () => toggle(target.path),
+                              style: { flex: 'none', margin: 0, accentColor: 'var(--dsw-alias-brand-primary)' },
+                            }),
+                            h('span', {
+                              style:
+                                target.action === 'create'
+                                  ? { ...ORGANIZE_BADGE_STYLE, ...ORGANIZE_BADGE_CREATE_STYLE }
+                                  : ORGANIZE_BADGE_STYLE,
+                            }, target.action === 'create' ? t('organize.create') : t('organize.reuse')),
+                            h('span', { style: ORGANIZE_GROUP_TITLE_STYLE }, target.title),
+                            h('span', { style: ORGANIZE_GROUP_COUNT_STYLE }, sessionCountLabel(target.sessions.length)),
+                          ),
+                          h('span', { style: ORGANIZE_GROUP_PATH_STYLE }, target.path),
+                          ...target.sessions.slice(0, 8).map((session) =>
+                            h(
+                              'span',
+                              { key: session.sessionId, style: ORGANIZE_SESSION_STYLE },
+                              h('span', { style: ORGANIZE_MODE_STYLE }, session.mode === 'attach' ? t('organize.attach') : t('organize.move')),
+                              h('span', { style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, session.title || session.sessionId),
+                              session.currentWorkspace === null
+                                ? null
+                                : h('span', { style: { flex: 'none', opacity: 0.7 } }, '· ' + session.currentWorkspace.title),
+                            ),
+                          ),
+                          target.sessions.length > 8
+                            ? h('span', { style: ORGANIZE_GROUP_PATH_STYLE }, '+' + String(target.sessions.length - 8))
+                            : null,
+                        ),
+                      ),
+                    ),
+                plan.summary.stays > 0
+                  ? h('p', { style: ORGANIZE_STAYS_STYLE }, t('organize.stays').replace('{count}', String(plan.summary.stays)))
+                  : null,
+                error === null ? null : h('div', { role: 'alert', style: ERROR_STYLE }, error),
+              )
+            : null,
+          h(
+            'div',
+            { style: FOOTER_STYLE },
+            h(
+              'button',
+              {
+                type: 'button',
+                style: { ...BUTTON_SECONDARY, ...(applying ? BUTTON_DISABLED : {}) },
+                disabled: applying,
+                onClick: close,
+              },
+              t('cancel'),
+            ),
+            h(
+              'button',
+              {
+                type: 'button',
+                style: { ...BUTTON_PRIMARY, ...(applying || loading || selectedSessions === 0 ? BUTTON_DISABLED : {}) },
+                disabled: applying || loading || selectedSessions === 0,
+                onClick: apply,
+              },
+              applying ? t('organize.applying') : t('organize.confirm').replace('{count}', String(selectedSessions)),
+            ),
+          ),
+        ),
+      )
+    }
+
     /** One failure response as localized text. */
     function describeFailure(payload, t) {
       const code = typeof payload?.code === 'string' ? payload.code : ''
@@ -707,6 +1197,18 @@ window.__ModuleLoader__.load({
           ),
         )
 
+        ctx.slots.inject(MENU_SLOT, () =>
+          ctx.slots.register(
+            {
+              name: MENU_SLOT,
+              id: 'organize-conversations',
+              order: 40,
+              locale: NS,
+            },
+            OrganizeConversationsMenuItem,
+          ),
+        )
+
         ctx.slots.inject(OVERLAY_SLOT, () =>
           ctx.slots.register(
             {
@@ -715,6 +1217,17 @@ window.__ModuleLoader__.load({
               locale: NS,
             },
             (slotProps) => h(MoveDialogEntry, { ...slotProps, onMoved, pickDirectory, createWorkspace }),
+          ),
+        )
+
+        ctx.slots.inject(OVERLAY_SLOT, () =>
+          ctx.slots.register(
+            {
+              name: OVERLAY_SLOT,
+              id: 'move-to-workspace.organize',
+              locale: NS,
+            },
+            OrganizeDialogEntry,
           ),
         )
       },
