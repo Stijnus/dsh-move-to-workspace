@@ -16,6 +16,13 @@ Configured on 2026-10-25 for this package:
 - Environment: none
 
 The workflow authenticates with OIDC, so no npm token is stored in GitHub.
+Because it runs `npm publish --provenance`, every version published this way
+carries a SLSA provenance attestation (`https://slsa.dev/provenance/v1`).
+Verify a release with `npm view dsh-move-to-workspace@<version>
+dist.attestations` or, after installing it, `npm audit signatures`; the
+registry serves the same attestations at
+`https://registry.npmjs.org/-/npm/v1/attestations/dsh-move-to-workspace@<version>`.
+The 0.1.1 release validated this path end to end.
 To inspect or change the configuration, open
 <https://www.npmjs.com/package/dsh-move-to-workspace/settings> while signed in
 with two-factor authentication. The CLI equivalent (`npm trust list`) also

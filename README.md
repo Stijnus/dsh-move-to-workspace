@@ -1,5 +1,10 @@
 # dsh-move-to-workspace
 
+[![npm version](https://img.shields.io/npm/v/dsh-move-to-workspace?label=npm&color=blue)](https://www.npmjs.com/package/dsh-move-to-workspace)
+[![npm provenance](https://img.shields.io/badge/npm%20provenance-SLSA%20v1-brightgreen)](https://www.npmjs.com/package/dsh-move-to-workspace)
+[![release](https://github.com/Stijnus/dsh-move-to-workspace/actions/workflows/release.yml/badge.svg)](https://github.com/Stijnus/dsh-move-to-workspace/actions/workflows/release.yml)
+[![license](https://img.shields.io/npm/l/dsh-move-to-workspace)](LICENSE)
+
 Move an existing DeepSeek Harness conversation into another workspace from the
 sidebar.
 
@@ -67,6 +72,29 @@ dsh plugin --profile <profile> add /absolute/path/to/dsh-move-to-workspace
 
 A new browser half may need a page reload (⌘R) to appear. Remove it with
 `dsh plugin --profile <profile> remove dsh-move-to-workspace`.
+
+## Release provenance
+
+Releases are built and published by GitHub Actions through npm **trusted
+publishing** (OIDC): the workflow exchanges a short-lived GitHub OIDC token for
+npm publish rights, so no npm token or secret is stored in the repository or in
+GitHub. Every published version carries a SLSA provenance attestation
+(`https://slsa.dev/provenance/v1`).
+
+Verify the latest release:
+
+```sh
+npm view dsh-move-to-workspace@latest dist.attestations
+npm audit signatures   # inside a project that installed the package
+```
+
+The attestation is visible on the
+[npm package page](https://www.npmjs.com/package/dsh-move-to-workspace) and
+served by the registry at
+`https://registry.npmjs.org/-/npm/v1/attestations/dsh-move-to-workspace@<version>`.
+The publishing workflow is
+[`.github/workflows/release.yml`](.github/workflows/release.yml); the publisher
+configuration and release steps are in [RELEASING.md](RELEASING.md).
 
 ## Files
 

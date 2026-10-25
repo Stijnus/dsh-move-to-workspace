@@ -6,6 +6,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Documented npm trusted publishing and SLSA provenance verification in the
+  README and RELEASING guide, and added npm, provenance, release and license
+  badges to the README.
+
 ## [0.1.1] - 2026-10-25
 
 ### Changed
