@@ -452,14 +452,15 @@ async function planFromHost(ctx) {
   const home = homedir()
   const registry = ctx.workspaceRegistry
   const cache = ctx.get('sessionProjectionCache')
-  const workspaces = registry
-    .list()
-    .map((workspace) => ({
+  const workspaces = await Promise.all(
+    registry.list().map(async (workspace) => ({
       id: String(workspace.id),
       title: workspace.title,
       path: workspace.path,
+      realPath: await realpath(workspace.path).catch(() => workspace.path),
       sessionIds: workspace.sessionIds.map(String),
-    }))
+    })),
+  )
   const accounted = new Map()
   for (const workspace of workspaces) for (const sessionId of workspace.sessionIds) accounted.set(sessionId, workspace)
   const records = await ctx.sessionQuery.listSessions()
@@ -501,10 +502,20 @@ async function planFromHost(ctx) {
  * @param home - user home directory.
  * @returns project candidates with display titles.
  */
+/**
+ * Canonical folder identity for a workspace row or a project candidate. The
+ * registry keys workspaces by the path string they were registered under, so a
+ * symlinked spelling and its target are the same folder but different rows.
+ * Every identity comparison here runs on the resolved path.
+ * @param entry - workspace row or candidate with `path` and optional `realPath`.
+ * @returns the resolved path when known, otherwise the registered path.
+ */
+const canonicalPathOf = (entry) => (typeof entry.realPath === 'string' && entry.realPath !== '' ? entry.realPath : entry.path)
+
 async function discoverProjects(workspaces, home) {
   const catchAll = workspaces
-    .filter((workspace) => workspaces.some((other) => other.id !== workspace.id && other.path.startsWith(workspace.path + '/')))
-    .map((workspace) => workspace.path)
+    .filter((workspace) => workspaces.some((other) => other.id !== workspace.id && canonicalPathOf(other).startsWith(canonicalPathOf(workspace) + '/')))
+    .map(canonicalPathOf)
   const roots = new Set([`${home}/Developer/GitHub`, ...catchAll])
   const projects = []
   const seen = new Set()
@@ -586,7 +597,7 @@ function projectScore(title, candidate) {
  */
 function bestProjectMatch(title, candidates, excludedPaths) {
   const scored = candidates
-    .filter((candidate) => !excludedPaths.has(candidate.path))
+    .filter((candidate) => !excludedPaths.has(canonicalPathOf(candidate)))
     .map((candidate) => ({ candidate, score: projectScore(title, candidate) }))
     .filter((entry) => entry.score > 0)
     .sort((left, right) => right.score - left.score)
@@ -606,26 +617,30 @@ export function planOrganization(input) {
   const sessions = input.sessions
   const workspaces = input.workspaces
   const workspaceById = new Map(workspaces.map((workspace) => [workspace.id, workspace]))
-  const workspaceByPath = new Map(workspaces.map((workspace) => [workspace.path, workspace]))
+  const workspaceByPath = new Map(workspaces.map((workspace) => [canonicalPathOf(workspace), workspace]))
   const catchAllPaths = new Set(
     workspaces
-      .filter((workspace) => workspaces.some((other) => other.id !== workspace.id && other.path.startsWith(workspace.path + '/')))
-      .map((workspace) => workspace.path),
+      .filter((workspace) => workspaces.some((other) => other.id !== workspace.id && canonicalPathOf(other).startsWith(canonicalPathOf(workspace) + '/')))
+      .map(canonicalPathOf),
   )
   const candidates = []
   const seenCandidates = new Set()
   for (const candidate of [...input.projects, ...workspaces]) {
-    if (typeof candidate.path !== 'string' || seenCandidates.has(candidate.path)) continue
-    if (catchAllPaths.has(candidate.path) || isGenericDirectory(candidate.path, home)) continue
-    seenCandidates.add(candidate.path)
-    candidates.push({ path: candidate.path, title: String(candidate.title ?? titleFromPath(candidate.path)) })
+    if (typeof candidate.path !== 'string') continue
+    const canonical = canonicalPathOf(candidate)
+    if (seenCandidates.has(canonical)) continue
+    if (catchAllPaths.has(canonical) || isGenericDirectory(canonical, home)) continue
+    seenCandidates.add(canonical)
+    candidates.push({ path: candidate.path, realPath: canonical, title: String(candidate.title ?? titleFromPath(candidate.path)) })
   }
   const groups = new Map()
   const stays = []
   const addSession = (target, session, mode) => {
-    const existing = workspaceByPath.get(target.path)
-    const group = groups.get(target.path) ?? {
-      path: target.path,
+    const canonical = canonicalPathOf(target)
+    const existing = workspaceByPath.get(canonical)
+    const group = groups.get(canonical) ?? {
+      path: existing === undefined ? target.path : existing.path,
+      realPath: canonical,
       title: existing === undefined ? (target.title ?? titleFromPath(target.path)) : existing.title,
       workspaceId: existing === undefined ? null : String(existing.id),
       action: existing === undefined ? 'create' : 'reuse',
@@ -640,7 +655,7 @@ export function planOrganization(input) {
         ? null
         : { id: session.workspaceId, title: workspaceById.get(session.workspaceId)?.title ?? null },
     })
-    groups.set(target.path, group)
+    groups.set(canonical, group)
   }
   const eligible = sessions.filter((session) => session.archived !== true && session.origin !== 'subagent')
   for (const session of eligible) {
@@ -650,8 +665,8 @@ export function planOrganization(input) {
     }
     const cwd = session.cwd
     const current = session.workspaceId === null || session.workspaceId === undefined ? undefined : workspaceById.get(session.workspaceId)
-    if (current !== undefined && current.path === cwd) {
-      if (!catchAllPaths.has(current.path)) {
+    if (current !== undefined && canonicalPathOf(current) === cwd) {
+      if (!catchAllPaths.has(canonicalPathOf(current))) {
         stays.push({ sessionId: session.sessionId, title: session.title ?? '', reason: 'already-grouped', workspace: current.title })
         continue
       }
@@ -664,7 +679,12 @@ export function planOrganization(input) {
       continue
     }
     if (!isGenericDirectory(cwd, home)) {
-      addSession(workspaceByPath.get(cwd) ?? { path: cwd, title: titleFromPath(cwd) }, session, 'attach')
+      const target = workspaceByPath.get(cwd)
+      if (target !== undefined && String(target.id) === String(session.workspaceId ?? '')) {
+        stays.push({ sessionId: session.sessionId, title: session.title ?? '', reason: 'already-grouped', workspace: target.title })
+        continue
+      }
+      addSession(target ?? { path: cwd, realPath: cwd, title: titleFromPath(cwd) }, session, 'attach')
       continue
     }
     const match = bestProjectMatch(session.title ?? '', candidates, new Set(catchAllPaths))
@@ -696,6 +716,54 @@ export function planOrganization(input) {
 }
 
 /**
+ * Find the registered workspace that already owns a folder, comparing canonical
+ * paths so a symlinked registration and its target count as the same workspace.
+ * @param registry - workspace registry.
+ * @param canonical - resolved folder path.
+ * @returns the matching workspace, or undefined when the folder is unregistered.
+ */
+async function findWorkspaceForFolder(registry, canonical) {
+  for (const workspace of registry.list()) {
+    if (typeof workspace.path !== 'string' || workspace.path === '') continue
+    const realPath = await realpath(workspace.path).catch(() => workspace.path)
+    if (realPath === canonical) return workspace
+  }
+  return undefined
+}
+
+/**
+ * Release the accounting a freshly registered workspace adopted on its own.
+ * A folder registered under a second spelling adopts the Sessions stored below
+ * it, so they would be accounted by two workspaces at once. Detaching keeps the
+ * original owner, which is the registration the user already had.
+ * @param ctx - host context.
+ * @param registry - workspace registry.
+ * @param workspace - the workspace created by this request.
+ * @returns the Session ids that were released.
+ */
+async function dropDoubleAccountedSessions(ctx, registry, workspace) {
+  const detached = new Set()
+  const sessionIds = Array.isArray(workspace.sessionIds) ? [...workspace.sessionIds] : []
+  if (sessionIds.length === 0) return detached
+  const owners = new Map()
+  for (const other of registry.list()) {
+    if (String(other.id) === String(workspace.id)) continue
+    for (const sessionId of other.sessionIds ?? []) if (!owners.has(String(sessionId))) owners.set(String(sessionId), String(other.id))
+  }
+  for (const sessionId of sessionIds) {
+    if (!owners.has(String(sessionId))) continue
+    try {
+      await workspace.detachSession(sessionId)
+      detached.add(sessionId)
+      ctx.logger.warn('move-to-workspace: released "' + sessionId + '" from the new workspace because "' + owners.get(String(sessionId)) + '" already accounts for it')
+    } catch (error) {
+      ctx.logger.warn('move-to-workspace: could not release "' + sessionId + '": ' + describeError(error))
+    }
+  }
+  return detached
+}
+
+/**
  * Apply the selected workspace groups: register each folder, then move every
  * selected conversation with the same archive-copy-attach operation as the
  * single-conversation endpoint. Failures stay isolated per conversation.
@@ -722,18 +790,26 @@ async function applyOrganization(ctx, targets) {
       workingDirectoryResults.push({ path: target.path, ok: false, error: 'not-a-directory' })
       continue
     }
-    const existed = registry.list().some((workspace) => workspace.path === canonical)
+    // Reuse the workspace that already owns this folder under any spelling of
+    // its path. Registering a second one for the same folder gives the folder's
+    // Sessions two owners, which the registry rejects on the next load.
     let workspace
+    let created = false
     try {
-      workspace = await registry.create(canonical)
+      workspace = await findWorkspaceForFolder(registry, canonical)
+      if (workspace === undefined) {
+        workspace = await registry.create(canonical)
+        created = true
+      }
     } catch (error) {
       workingDirectoryResults.push({ path: canonical, ok: false, error: describeError(error) })
       continue
     }
-    workingDirectoryResults.push({ path: canonical, ok: true, workspaceId: String(workspace.id), title: workspace.title, created: !existed })
+    workingDirectoryResults.push({ path: canonical, ok: true, workspaceId: String(workspace.id), title: workspace.title, created })
+    const detached = created ? await dropDoubleAccountedSessions(ctx, registry, workspace) : new Set()
     for (const sessionId of target.sessionIds) {
       if (typeof sessionId !== 'string' || sessionId === '') continue
-      if (workspace.sessionIds.includes(sessionId)) {
+      if (workspace.sessionIds.includes(sessionId) && !detached.has(sessionId)) {
         sessionResults.push({ workspaceId: String(workspace.id), sessionId, ok: true, alreadyInPlace: true })
         continue
       }

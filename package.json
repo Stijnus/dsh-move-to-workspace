@@ -1,12 +1,13 @@
 {
   "name": "dsh-move-to-workspace",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "Move a DeepSeek Harness conversation into another workspace: copies the transcript into a new session bound to the target folder, archives the original, and can register a new workspace folder from the picker.",
   "type": "module",
   "license": "MIT",
   "main": "index.js",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "registry-doctor": "node scripts/registry-doctor.mjs"
   },
   "keywords": [
     "dsh",
@@ -34,7 +35,8 @@
     "locale/*.json",
     "icon.svg",
     "README.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "scripts/registry-doctor.mjs"
   ],
   "dsh": {
     "bundle": {

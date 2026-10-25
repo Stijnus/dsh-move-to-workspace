@@ -13,6 +13,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.10] — 2026-10-25
+
+### Fixed
+
+- A folder registered under more than one path spelling — a symlink next to its
+  target, for example — is one workspace, not two. The planner now resolves every
+  registered path before matching conversations to folders, so an already
+  registered folder is reused instead of offered as a new target.
+- Applying a group reuses the workspace that already owns its folder under any
+  spelling. Before, `apply` computed that check and then called `create()`
+  unconditionally, so a symlinked working copy produced a second workspace row
+  for the same folder.
+- A newly registered workspace that adopts the Sessions stored below its folder
+  now releases the ones another workspace already accounts for. One Session
+  with two owners makes the stored registry inconsistent, and an inconsistent
+  registry stops the whole workspace domain from loading on the next start: the
+  app then shows no workspaces and no conversations.
+
+### Added
+
+- `scripts/registry-doctor.mjs` (`npm run registry-doctor`) reports and repairs a
+  registry that already has duplicate folder rows or shared conversations.
+  Report only by default; `--fix` writes a backup first and requires the app to
+  be closed.
+
 ## [0.1.8] - 2026-10-25
 
 ### Fixed

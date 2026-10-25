@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
-import { mkdtemp, mkdir, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as plugin from '../index.js'
@@ -244,3 +244,98 @@ for (const failureAt of [null, 'append', 'flush', 'attach', 'archive', 'changed'
     }
   })
 }
+
+test('planOrganization treats a symlinked workspace path and its target as one workspace', () => {
+  const real = '/home/u/Developer/GitHub/Plugins/dsh-moodboard'
+  const workspaces = [{ id: 'w1', title: 'dsh-moodboard', path: '/home/u/Developer/GitHub/dsh-moodboard', realPath: real }]
+  const projects = [{ path: real, title: 'dsh-moodboard' }]
+  const sessions = [
+    { sessionId: 's1', title: 'Moodboard work', cwd: real, origin: null, archived: false, workspaceId: 'w1' },
+  ]
+  const plan = plugin.planOrganization({ home: '/home/u', sessions, workspaces, projects })
+  assert.equal(plan.summary.create, 0, 'a folder that is already registered under another spelling is never a create target')
+  assert.equal(plan.summary.targets, 0)
+  assert.deepEqual(plan.stays.map((entry) => [entry.sessionId, entry.reason]), [['s1', 'already-grouped']])
+})
+
+test('planOrganization reuses the workspace registered under the symlink spelling', () => {
+  const real = '/home/u/Developer/GitHub/Plugins/dsh-moodboard'
+  const workspaces = [{ id: 'w1', title: 'dsh-moodboard', path: '/home/u/Developer/GitHub/dsh-moodboard', realPath: real }]
+  const projects = [{ path: real, title: 'dsh-moodboard' }]
+  const sessions = [
+    { sessionId: 's1', title: 'Moodboard work', cwd: real, origin: null, archived: false, workspaceId: null },
+  ]
+  const plan = plugin.planOrganization({ home: '/home/u', sessions, workspaces, projects })
+  assert.deepEqual(
+    plan.targets.map((target) => [target.path, target.action, target.workspaceId]),
+    [['/home/u/Developer/GitHub/dsh-moodboard', 'reuse', 'w1']],
+    'the registered spelling is reused instead of creating a second workspace',
+  )
+})
+
+test('applying a target for an already registered folder reuses it instead of creating a duplicate', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-move-symlink-'))
+  try {
+    const real = join(root, 'real')
+    const link = join(root, 'link')
+    await mkdir(real)
+    await symlink(real, link)
+    let createCalls = 0
+    const existing = { id: 'w1', title: 'real', path: link, sessionIds: [], detachSession: async () => {} }
+    const route = captureRoute({
+      admit: () => ({ peer: { principal: { kind: 'owner' } } }),
+      workspaceRegistry: {
+        get: () => existing,
+        list: () => [existing],
+        archivedSessionIds: [],
+        pinnedSessionIds: [],
+        create: async (path) => { createCalls += 1; return { id: 'new', title: 'real', path, sessionIds: [] } },
+      },
+    })
+    const organize = route.routes.find((candidate) => candidate.path === '/organize')
+    const { req, emit } = request('POST', 'application/json', JSON.stringify({ mode: 'apply', targets: [{ path: link, sessionIds: [] }] }))
+    const res = fakeResponse()
+    const pending = organize.handler(req, res)
+    emit()
+    await pending
+    assert.equal(res.status, 200)
+    const body = JSON.parse(res.body)
+    assert.equal(createCalls, 0, 'no second workspace is registered for the same folder')
+    assert.equal(body.workspaces[0].workspaceId, 'w1')
+    assert.equal(body.workspaces[0].created, false)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('a workspace that adopts an already accounted session releases it', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-move-adopt-'))
+  try {
+    const folder = join(root, 'fresh')
+    await mkdir(folder)
+    const detached = []
+    const created = { id: 'new', title: 'fresh', path: folder, sessionIds: ['s1'], detachSession: async (sessionId) => { detached.push(sessionId) } }
+    const owner = { id: 'w1', title: 'default-workspace', path: root, sessionIds: ['s1'], detachSession: async () => {} }
+    const route = captureRoute({
+      admit: () => ({ peer: { principal: { kind: 'owner' } } }),
+      workspaceRegistry: {
+        get: () => undefined,
+        list: () => [owner],
+        archivedSessionIds: [],
+        pinnedSessionIds: [],
+        create: async () => created,
+      },
+    })
+    const organize = route.routes.find((candidate) => candidate.path === '/organize')
+    const { req, emit } = request('POST', 'application/json', JSON.stringify({ mode: 'apply', targets: [{ path: folder, sessionIds: [] }] }))
+    const res = fakeResponse()
+    const pending = organize.handler(req, res)
+    emit()
+    await pending
+    assert.equal(res.status, 200)
+    assert.equal(JSON.parse(res.body).workspaces[0].created, true)
+    assert.deepEqual(detached, ['s1'], 'the adopted session keeps its original single owner')
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
