@@ -6,6 +6,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-10-25
+
+### Fixed
+
+- The confirming Rename shadow uses priority -1, which outranks the built-in
+  row (a numerically lower priority wins). 0.1.7's priority 1 registered but
+  lost the election, leaving the built-in Rename as the active row.
+
 ## [0.1.7] - 2026-10-25
 
 ### Fixed
