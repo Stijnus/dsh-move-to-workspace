@@ -5,17 +5,34 @@ commit and publishes it to npm with a provenance attestation. The workflow does
 not create the GitHub release or update the market index — finish the checklist
 below after npm confirms the version.
 
-## One-time setup
+## Trusted publishing (configured)
 
-1. Create the GitHub repository and push `main` (the workflows are committed).
-2. Configure npm **trusted publishing** for this package: open
-   <https://www.npmjs.com/package/dsh-move-to-workspace> → **Settings** →
-   **Trusted publishing** → add a GitHub Actions publisher with
-   organization/user `Stijnus`, repository `dsh-move-to-workspace`, workflow
-   filename `release.yml`, and direct `npm publish` allowed. No npm token is
-   stored in GitHub, and the first publication must happen within two days of
-   creating the configuration.
-3. Optionally protect `main` with the `test` workflow as a required check.
+Configured on 2026-10-25 for this package:
+
+- Provider: GitHub Actions
+- Repository: `Stijnus/dsh-move-to-workspace`
+- Workflow filename: `release.yml`
+- Allowed actions: `npm publish` and `npm stage publish`
+- Environment: none
+
+The workflow authenticates with OIDC, so no npm token is stored in GitHub.
+To inspect or change the configuration, open
+<https://www.npmjs.com/package/dsh-move-to-workspace/settings> while signed in
+with two-factor authentication. The CLI equivalent (`npm trust list`) also
+requires an interactive web 2FA approval per call and exits `EOTP` outside a
+terminal.
+
+If the configuration is ever revoked, re-add it with either that settings page
+or, from a terminal with an authenticated npm login:
+
+```sh
+npm trust github dsh-move-to-workspace \
+  --repo Stijnus/dsh-move-to-workspace \
+  --file release.yml \
+  --allow-publish
+```
+
+Optionally protect `main` with the `test` workflow as a required check.
 
 ## Cut a release
 
