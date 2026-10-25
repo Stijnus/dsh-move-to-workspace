@@ -14,11 +14,14 @@
  * - `POST /move-to-workspace` — `{ sessionId, workspaceId }` → the moved Session.
  * - `POST /organize` — `{ mode: 'plan' }` previews a bulk organization, and
  *   `{ mode: 'apply', targets }` applies the selected workspace groups.
+ * - `POST /delete-session` — `{ sessionId }` permanently removes one closed
+ *   conversation's stored log, after the Client confirms destruction.
  */
 
 import { randomUUID } from 'node:crypto'
-import { readdir, realpath, stat } from 'node:fs/promises'
+import { readdir, realpath, rm, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
+import { dirname, join } from 'node:path'
 
 export const name = 'move-to-workspace'
 
@@ -35,6 +38,9 @@ const ORGANIZE_ENDPOINT = '/organize'
 
 /** Organization plans may carry many session identities. */
 const MAX_ORGANIZE_BODY_BYTES = 64 * 1024
+
+/** Same-origin endpoint that permanently deletes one stored conversation. */
+const DELETE_SESSION_ENDPOINT = '/delete-session'
 
 /** Stored plan for a failing request; `status` travels on the wire. */
 class MoveError extends Error {
@@ -71,6 +77,13 @@ export function apply(ctx) {
       kind: 'exact',
       path: ORGANIZE_ENDPOINT,
       handler: (request, response) => serveOrganize(ctx, request, response),
+    }),
+  )
+  ctx.effect(() =>
+    ctx.webServer.register({
+      kind: 'exact',
+      path: DELETE_SESSION_ENDPOINT,
+      handler: (request, response) => serveDeleteSession(ctx, request, response),
     }),
   )
 }
@@ -741,6 +754,108 @@ async function applyOrganization(ctx, targets) {
     }
   }
   return { workspaces: workingDirectoryResults, sessions: sessionResults }
+}
+
+/**
+ * Answer one permanent-deletion request. The Client confirms destruction first;
+ * this endpoint re-validates and then removes the stored log.
+ * @param ctx - host context.
+ * @param request - incoming HTTP request.
+ * @param response - outgoing HTTP response.
+ */
+async function serveDeleteSession(ctx, request, response) {
+  try {
+    if (request.method !== 'POST') {
+      respond(response, 405, failure('method-not-allowed', 'Delete requests must use POST.'))
+      return
+    }
+    if (!admitOwnerJson(ctx, request, response)) return
+    let body
+    try {
+      body = await readJsonBody(request)
+    } catch {
+      respond(response, 400, failure('invalid-body', 'The request body is not valid JSON.'))
+      return
+    }
+    if (body === null || typeof body !== 'object' || Array.isArray(body) || typeof body.sessionId !== 'string' || body.sessionId === '') {
+      respond(response, 400, failure('invalid-body', 'A sessionId is required.'))
+      return
+    }
+    const result = await deleteSession(ctx, body.sessionId)
+    respond(response, 200, { ok: true, ...result })
+  } catch (error) {
+    if (error instanceof MoveError) {
+      respond(response, error.status, failure(error.code, error.message, error.details))
+      return
+    }
+    ctx.logger.warn('move-to-workspace: delete failed unexpectedly: ' + describeError(error))
+    respond(response, 500, failure('delete-failed', 'Deleting the conversation failed unexpectedly.'))
+  }
+}
+
+/**
+ * Permanently remove one conversation: detach its workspace accounting, drop
+ * archive/pin membership, delete the stored log directory and its projection
+ * cache row, then tell connected Clients to drop the row. Refuses live Sessions
+ * and subagent children, where removal would invalidate another live owner.
+ * @param ctx - host context.
+ * @param sessionId - Session to delete.
+ * @returns confirmation of the removed log.
+ */
+async function deleteSession(ctx, sessionId) {
+  const registry = ctx.workspaceRegistry
+  const persistence = ctx.sessionPersistence
+  let snapshot
+  try {
+    snapshot = await persistence.stat(sessionId)
+  } catch (error) {
+    throw new MoveError(409, 'session-unreadable', 'This conversation log cannot be read, so it cannot be deleted safely: ' + describeError(error))
+  }
+  if (snapshot === undefined) {
+    throw new MoveError(404, 'session-not-found', 'That conversation no longer exists.')
+  }
+  const header = snapshot.header
+  if (header.origin === 'subagent') {
+    throw new MoveError(400, 'subagent-session', 'A subagent conversation cannot be deleted on its own.')
+  }
+  const liveSession = ctx.get('sessions')?.get(sessionId)
+  const liveAgent = ctx.get('agents')?.get(sessionId)
+  if (liveSession !== undefined || liveAgent !== undefined) {
+    throw new MoveError(409, 'session-live', 'This conversation is currently open. Close it before deleting its log.')
+  }
+  for (const workspace of registry.list()) {
+    if (!workspace.sessionIds.includes(sessionId)) continue
+    try {
+      await workspace.detachSession(sessionId)
+    } catch (error) {
+      ctx.logger.warn('move-to-workspace: could not detach "' + sessionId + '" before deletion: ' + describeError(error))
+    }
+  }
+  if (registry.archivedSessionIds.includes(sessionId)) {
+    try { await registry.unarchiveSession(sessionId) } catch {}
+  }
+  if (registry.pinnedSessionIds.includes(sessionId)) {
+    try { await registry.unpinSession(sessionId) } catch {}
+  }
+  const located = persistence.locate?.(header)
+  if (located?.path === undefined) {
+    throw new MoveError(500, 'delete-failed', 'The stored log location is unknown, so nothing was removed.')
+  }
+  const logDirectory = dirname(located.path)
+  try {
+    await rm(logDirectory, { recursive: true, force: true })
+  } catch (error) {
+    throw new MoveError(500, 'delete-failed', 'The conversation log could not be removed: ' + describeError(error))
+  }
+  try {
+    await rm(join(homedir(), '.dsh', 'storages', 'session_projcache', 'sessions', sessionId + '.json'), { force: true })
+  } catch (error) {
+    ctx.logger.warn('move-to-workspace: projection cache row for "' + sessionId + '" was not removed: ' + describeError(error))
+  }
+  try {
+    ctx.emit('api-session/removed', sessionId)
+  } catch {}
+  return { sessionId, removedLog: true, logDirectory }
 }
 
 /**

@@ -19,6 +19,7 @@ window.__ModuleLoader__.load({
     const NS = 'move-to-workspace'
     const ENDPOINT = '/move-to-workspace'
     const ORGANIZE_ENDPOINT = '/organize'
+    const DELETE_ENDPOINT = '/delete-session'
     const MENU_SLOT = 'sidebar.workspaces.session.menu.item'
     const OVERLAY_SLOT = 'shell.overlay'
     const MENU_ORDER = 350
@@ -47,6 +48,19 @@ window.__ModuleLoader__.load({
         'organize.applyFailed': '{count} conversation(s) could not be moved: {detail}',
         'organize.planFailed': 'The organization plan could not be loaded.',
         'organize.done': 'Organized {count} conversations.',
+        'delete.menu': 'Delete conversation…',
+        'delete.title': 'Delete conversation',
+        'delete.description': 'Permanently delete “{title}”?',
+        'delete.warning':
+          'This removes the session log from disk and cannot be undone. Archive the conversation instead if you might need it later.',
+        'delete.confirm': 'Delete',
+        'delete.deleting': 'Deleting…',
+        'delete.errorLive': 'This conversation is currently open. Close it, then try again.',
+        'delete.errorNotFound': 'That conversation no longer exists.',
+        'delete.errorSubagent': 'A subagent conversation cannot be deleted on its own.',
+        'delete.errorUnreadable': 'The conversation log cannot be read, so it was not deleted.',
+        'delete.errorFailed': 'The conversation could not be deleted.',
+        'delete.errorForbidden': 'This caller may not delete conversations.',
         'dialog.title': 'Move to workspace',
         'dialog.description':
           'Copy “{title}” into another workspace. It continues there as a new conversation; the original is archived and can be restored.',
@@ -108,6 +122,18 @@ window.__ModuleLoader__.load({
         'organize.applyFailed': '{count} 个会话无法移动：{detail}',
         'organize.planFailed': '无法加载整理计划。',
         'organize.done': '已整理 {count} 个会话。',
+        'delete.menu': '删除会话…',
+        'delete.title': '删除会话',
+        'delete.description': '永久删除“{title}”？',
+        'delete.warning': '这会从磁盘中移除会话日志，且无法撤销。如果以后可能用到，请改用归档。',
+        'delete.confirm': '删除',
+        'delete.deleting': '正在删除…',
+        'delete.errorLive': '该会话当前处于打开状态。请先关闭后再试。',
+        'delete.errorNotFound': '该会话已不存在。',
+        'delete.errorSubagent': '子代理会话不能单独删除。',
+        'delete.errorUnreadable': '无法读取会话日志，因此未删除。',
+        'delete.errorFailed': '无法删除该会话。',
+        'delete.errorForbidden': '当前调用方无权删除会话。',
         'dialog.title': '移动到工作区',
         'dialog.description': '将“{title}”复制到另一个工作区。它会在那里作为新会话继续，原会话会被归档并可恢复。',
         'dialog.untitled': '此会话',
@@ -1130,6 +1156,231 @@ window.__ModuleLoader__.load({
       )
     }
 
+    // Delete confirmation request, raised from the row menu.
+    let deleteRequest = null
+    const deleteListeners = new Set()
+
+    function openDeleteDialog(sessionId, displayTitle) {
+      deleteRequest = { sessionId, displayTitle, nonce: `${Date.now()}-${Math.random()}` }
+      for (const listener of deleteListeners) listener(deleteRequest)
+    }
+
+    function closeDeleteDialog() {
+      deleteRequest = null
+      for (const listener of deleteListeners) listener(null)
+    }
+
+    function useDeleteRequest() {
+      const [current, setCurrent] = React.useState(deleteRequest)
+      React.useEffect(() => {
+        deleteListeners.add(setCurrent)
+        setCurrent(deleteRequest)
+        return () => {
+          deleteListeners.delete(setCurrent)
+        }
+      }, [])
+      return current
+    }
+
+    const DELETE_BUTTON_STYLE = {
+      ...BUTTON_BASE,
+      border: '0.5px solid var(--dsw-alias-state-error-primary)',
+      background: 'transparent',
+      color: 'var(--dsw-alias-state-error-primary)',
+    }
+    const DELETE_WARNING_STYLE = {
+      margin: 0,
+      fontSize: '12px',
+      lineHeight: '18px',
+      color: 'var(--dsw-alias-state-error-primary)',
+    }
+    const DELETE_META_STYLE = {
+      margin: 0,
+      fontSize: '11px',
+      lineHeight: '16px',
+      color: 'var(--dsw-alias-label-secondary)',
+      opacity: 0.8,
+      wordBreak: 'break-all',
+    }
+
+    /** Trash-can glyph for the destructive row. */
+    function DeleteIcon() {
+      return h(
+        'svg',
+        {
+          width: 16,
+          height: 16,
+          viewBox: '0 0 16 16',
+          fill: 'none',
+          stroke: 'currentColor',
+          strokeWidth: 1.3,
+          strokeLinecap: 'round',
+          strokeLinejoin: 'round',
+          'aria-hidden': true,
+          style: { display: 'block', flex: 'none' },
+        },
+        h('path', { d: 'M2.75 4.5h10.5' }),
+        h('path', { d: 'M6 4.5V3.25h4V4.5' }),
+        h('path', { d: 'M4 4.5l.55 8.1a1 1 0 0 0 1 .9h4.9a1 1 0 0 0 1-.9L12 4.5' }),
+        h('path', { d: 'M6.6 7v4M9.4 7v4' }),
+      )
+    }
+
+    /**
+     * Destructive row action: ask for confirmation before deleting the log.
+     * @param props - owner share, menu open state, and locale.
+     * @returns the menu row.
+     */
+    function DeleteConversationMenuItem({ sessionId, displayTitle, useMenuOpenState, t }) {
+      const [, setMenuOpen] = useMenuOpenState()
+      const [hover, setHover] = React.useState(false)
+      return h(
+        'button',
+        {
+          type: 'button',
+          role: 'menuitem',
+          style: hover ? { ...MENU_ITEM_STYLE, ...MENU_ITEM_HOVER_STYLE } : MENU_ITEM_STYLE,
+          onMouseEnter: () => setHover(true),
+          onMouseLeave: () => setHover(false),
+          onFocus: () => setHover(true),
+          onBlur: () => setHover(false),
+          onClick: () => {
+            setMenuOpen(false)
+            openDeleteDialog(sessionId, displayTitle)
+          },
+        },
+        h(DeleteIcon),
+        h('span', { style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, t('delete.menu')),
+      )
+    }
+
+    /**
+     * The `shell.overlay` entry for the delete confirmation.
+     * @param props - locale.
+     * @returns the open confirmation, or null.
+     */
+    function DeleteDialogEntry({ t }) {
+      const request = useDeleteRequest()
+      if (request === null) return null
+      return h(DeleteDialog, { key: `${request.sessionId}:${request.nonce}`, request, t })
+    }
+
+    /**
+     * One delete confirmation: states the destruction clearly, then removes the
+     * log only after the user confirms. Failures stay inline.
+     * @param props - request and locale.
+     * @returns the confirmation dialog.
+     */
+    function DeleteDialog({ request, t }) {
+      const [busy, setBusy] = React.useState(false)
+      const [error, setError] = React.useState(null)
+      const cardRef = React.useRef(null)
+
+      React.useEffect(() => {
+        if (busy || typeof document === 'undefined') return undefined
+        const onKeyDown = (event) => {
+          if (event.key !== 'Escape') return
+          event.preventDefault()
+          event.stopPropagation()
+          closeDeleteDialog()
+        }
+        document.addEventListener('keydown', onKeyDown, true)
+        return () => document.removeEventListener('keydown', onKeyDown, true)
+      }, [busy])
+
+      const close = () => {
+        if (busy) return
+        closeDeleteDialog()
+      }
+
+      const confirm = async () => {
+        if (busy) return
+        setBusy(true)
+        setError(null)
+        try {
+          const response = await fetch(DELETE_ENDPOINT, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ sessionId: request.sessionId }),
+          })
+          const payload = await response.json().catch(() => null)
+          if (!response.ok || payload?.ok !== true) {
+            setBusy(false)
+            const code = typeof payload?.code === 'string' ? payload.code : ''
+            const keys = {
+              'session-live': 'delete.errorLive',
+              'session-not-found': 'delete.errorNotFound',
+              'subagent-session': 'delete.errorSubagent',
+              'session-unreadable': 'delete.errorUnreadable',
+              'delete-failed': 'delete.errorFailed',
+              unauthorized: 'error.unauthorized',
+              forbidden: 'delete.errorForbidden',
+            }
+            setError(keys[code] === undefined ? t('delete.errorFailed') : t(keys[code]))
+            return
+          }
+          setBusy(false)
+          closeDeleteDialog()
+        } catch (reason) {
+          setBusy(false)
+          setError(t('error.network'))
+        }
+      }
+
+      const titleText = request.displayTitle === '' ? t('dialog.untitled') : request.displayTitle
+
+      return h(
+        'div',
+        {
+          style: BACKDROP_STYLE,
+          onMouseDown: (event) => {
+            if (event.target === event.currentTarget) close()
+          },
+        },
+        h(
+          'div',
+          {
+            ref: cardRef,
+            role: 'alertdialog',
+            'aria-modal': 'true',
+            'aria-labelledby': 'delete-title',
+            'aria-describedby': 'delete-description',
+            style: CARD_STYLE,
+          },
+          h('h2', { id: 'delete-title', style: TITLE_STYLE }, t('delete.title')),
+          h('p', { id: 'delete-description', style: { ...DESCRIPTION_STYLE, color: 'var(--dsw-alias-label-primary)' } }, t('delete.description').replace('{title}', titleText)),
+          h('p', { style: DELETE_META_STYLE }, request.sessionId),
+          h('p', { style: DELETE_WARNING_STYLE }, t('delete.warning')),
+          error === null ? null : h('div', { role: 'alert', style: ERROR_STYLE }, error),
+          h(
+            'div',
+            { style: FOOTER_STYLE },
+            h(
+              'button',
+              {
+                type: 'button',
+                style: { ...BUTTON_SECONDARY, ...(busy ? BUTTON_DISABLED : {}) },
+                disabled: busy,
+                onClick: close,
+                autoFocus: true,
+              },
+              t('cancel'),
+            ),
+            h(
+              'button',
+              {
+                type: 'button',
+                style: { ...DELETE_BUTTON_STYLE, ...(busy ? BUTTON_DISABLED : {}) },
+                disabled: busy,
+                onClick: confirm,
+              },
+              busy ? t('delete.deleting') : t('delete.confirm'),
+            ),
+          ),
+        ),
+      )
+    }
+
     /** One failure response as localized text. */
     function describeFailure(payload, t) {
       const code = typeof payload?.code === 'string' ? payload.code : ''
@@ -1209,6 +1460,18 @@ window.__ModuleLoader__.load({
           ),
         )
 
+        ctx.slots.inject(MENU_SLOT, () =>
+          ctx.slots.register(
+            {
+              name: MENU_SLOT,
+              id: 'delete-conversation',
+              order: 410,
+              locale: NS,
+            },
+            DeleteConversationMenuItem,
+          ),
+        )
+
         ctx.slots.inject(OVERLAY_SLOT, () =>
           ctx.slots.register(
             {
@@ -1228,6 +1491,17 @@ window.__ModuleLoader__.load({
               locale: NS,
             },
             OrganizeDialogEntry,
+          ),
+        )
+
+        ctx.slots.inject(OVERLAY_SLOT, () =>
+          ctx.slots.register(
+            {
+              name: OVERLAY_SLOT,
+              id: 'move-to-workspace.delete',
+              locale: NS,
+            },
+            DeleteDialogEntry,
           ),
         )
       },

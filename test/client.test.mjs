@@ -107,6 +107,13 @@ test('registers the session-row actions and both dialog overlays', () => {
   const organizeOverlay = registrations.find((entry) => entry.spec.id === 'move-to-workspace.organize')
   assert.ok(organizeOverlay, 'organize overlay registration exists')
   assert.equal(organizeOverlay.spec.name, 'shell.overlay')
+  const deleteRow = registrations.find((entry) => entry.spec.id === 'delete-conversation')
+  assert.ok(deleteRow, 'delete menu registration exists')
+  assert.equal(deleteRow.spec.name, 'sidebar.workspaces.session.menu.item')
+  assert.equal(deleteRow.spec.order, 410)
+  const deleteOverlay = registrations.find((entry) => entry.spec.id === 'move-to-workspace.delete')
+  assert.ok(deleteOverlay, 'delete overlay registration exists')
+  assert.equal(deleteOverlay.spec.name, 'shell.overlay')
 })
 
 test('the menu row is offered for ordinary rows and hidden for archived rows', () => {
@@ -136,6 +143,24 @@ test('the organize action opens a preview dialog', () => {
   const text = textOf(tree)
   assert.ok(text.includes('organize.title'), 'dialog title is rendered')
   assert.ok(text.includes('organize.loading'), 'dialog starts by loading the plan')
+})
+
+test('the delete action asks for confirmation before removing anything', () => {
+  const { registrations } = loadClient()
+  const menu = registrations.find((entry) => entry.spec.id === 'delete-conversation').component
+  const overlay = registrations.find((entry) => entry.spec.id === 'move-to-workspace.delete').component
+  let fetchCalls = 0
+  const row = called(menu({ sessionId: 's1', displayTitle: 'Delete me', useMenuOpenState: () => [false, () => {}], ...slotProps() }))
+  assert.equal(row.type, 'button')
+  assert.equal(row.props.role, 'menuitem')
+  row.props.onClick()
+  const tree = called(overlay(slotProps()))
+  const text = textOf(tree)
+  assert.ok(text.includes('delete.title'), 'confirmation title is rendered')
+  assert.ok(text.includes('delete.warning'), 'destructive warning is rendered')
+  assert.ok(text.includes('delete.confirm'), 'confirm button is rendered')
+  assert.ok(text.includes('delete.description'), 'conversation description is rendered')
+  assert.equal(fetchCalls, 0, 'nothing is requested before confirmation')
 })
 
 test('clicking the row opens a dialog that can register a new workspace', () => {

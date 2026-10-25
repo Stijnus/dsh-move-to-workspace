@@ -96,6 +96,20 @@ The publishing workflow is
 [`.github/workflows/release.yml`](.github/workflows/release.yml); the publisher
 configuration and release steps are in [RELEASING.md](RELEASING.md).
 
+## Delete a conversation
+
+The row menu's **Delete conversation…** sits next to Archive and permanently
+removes the stored session log. It always asks first: the confirmation names the
+conversation, warns that the deletion cannot be undone, and points at Archive as
+the recoverable alternative.
+
+On confirmation the Host detaches the conversation from its workspace, clears
+its archive and pin membership, deletes the log directory and its
+projection-cache row, and removes the row from connected Clients. Deletion is
+refused with a stable error code while the conversation is currently open (a
+live Session holds the log) and for subagent child sessions. There is no undo,
+and unlike Archive the history is gone for good.
+
 ## Organize conversations
 
 Choose **Organize conversations…** from any conversation's row menu. The plugin
@@ -133,14 +147,18 @@ archived in their previous workspace.
 | `test/` | Node test-runner checks for the Host contract, the endpoint guards, and the Client registrations. |
 | `market-index.json` | Format-1 market index for Discover; `versions` is filled after the first npm publication. |
 
-## Endpoint
+## Endpoints
 
-`POST /move-to-workspace` (same origin, owner session) with
-`{"sessionId": "...", "workspaceId": "..."}`. Success:
-`{"ok": true, "sessionId": "<moved>", "workspaceId": "...", "copied": true|false}`.
-Failures: `{"ok": false, "code": "...", "message": "..."}`. Refusals while work
-runs include `activity` entries (`turn`, `subagent`, `job`, `schedule`) so the
-dialog can name what to stop.
+All endpoints are same-origin and require the owner session; failures answer
+`{"ok": false, "code": "...", "message": "..."}`.
+
+| Endpoint | Body | Result |
+| --- | --- | --- |
+| `POST /move-to-workspace` | `{ sessionId, workspaceId }` | `{ ok, sessionId, workspaceId, copied }`; running work refusals include `activity` entries (`turn`, `subagent`, `job`, `schedule`). |
+| `POST /organize` | `{ mode: "plan" }` | `{ ok, plan }` — workspace groups marked `create`/`reuse`, per-conversation `move`/`attach`, and the counts of conversations that stay put. |
+| `POST /organize` | `{ mode: "apply", targets: [{ path, sessionIds }] }` | `{ ok, workspaces, sessions }` with per-workspace and per-conversation results. |
+| `POST /delete-session` | `{ sessionId }` | `{ ok, sessionId, removedLog, logDirectory }`; refuses live Sessions and subagent children. |
+
 
 ## Limits
 

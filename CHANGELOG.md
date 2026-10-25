@@ -6,6 +6,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-10-25
+
+### Added
+
+- **Delete conversation…** next to Archive in the conversation row menu. A
+  confirmation dialog states that the stored log is removed permanently and
+  that archiving is the recoverable alternative; nothing is deleted until the
+  user confirms.
+- Deleting detaches the conversation from its workspace, clears archive/pin
+  membership, removes the log directory and its projection-cache row, and
+  removes the row from connected Clients. Deletion is refused for a
+  conversation that is currently open (a live Session holds the log) and for
+  subagent child sessions, with a stable error code.
+- `POST /delete-session` with `{ sessionId }` for the confirmed deletion.
+
 ## [0.1.4] - 2026-10-25
 
 ### Added

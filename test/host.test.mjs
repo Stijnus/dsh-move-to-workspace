@@ -137,9 +137,11 @@ test('registers the move and organize endpoints', () => {
   assert.deepEqual(route.routes.map((candidate) => [candidate.kind, candidate.path]), [
     ['exact', '/move-to-workspace'],
     ['exact', '/organize'],
+    ['exact', '/delete-session'],
   ])
   assert.equal(typeof route.handler, 'function')
   assert.equal(typeof route.routes[1].handler, 'function')
+  assert.equal(typeof route.routes[2].handler, 'function')
 })
 
 test('refuses an unauthenticated call before reading the body', async () => {
