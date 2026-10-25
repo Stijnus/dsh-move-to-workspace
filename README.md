@@ -1,5 +1,7 @@
 # dsh-move-to-workspace
 
+[English](./README.md) · [中文](./README.zh-CN.md)
+
 [![npm version](https://img.shields.io/npm/v/dsh-move-to-workspace?label=npm&color=blue)](https://www.npmjs.com/package/dsh-move-to-workspace)
 [![npm provenance](https://img.shields.io/badge/npm%20provenance-SLSA%20v1-brightgreen)](https://www.npmjs.com/package/dsh-move-to-workspace)
 [![release](https://github.com/Stijnus/dsh-move-to-workspace/actions/workflows/release.yml/badge.svg)](https://github.com/Stijnus/dsh-move-to-workspace/actions/workflows/release.yml)
@@ -13,6 +15,18 @@ target workspace — or register a new folder from the same dialog with
 **New workspace…** — and confirm. The conversation appears under the target
 workspace with its full history and title, continues there, and the original is
 archived in its old workspace (restorable with **Unarchive**).
+
+## Quick start
+
+```sh
+dsh plugin --profile web add dsh-move-to-workspace
+```
+
+Restart the Harness (or refresh the Web UI). Each conversation's **…** menu gains **Move to workspace…**.
+
+<sub>More from this suite: [Moodboard](https://github.com/Stijnus/dsh-moodboard) · [Composer Predictions](https://github.com/Stijnus/dsh-composer-predictions) · [Move to Workspace](https://github.com/Stijnus/dsh-move-to-workspace) · [Workspace Status](https://github.com/Stijnus/dsh-workspace-status) · [Prompt Rewrite](https://github.com/Stijnus/dsh-prompt-optimizer)</sub>
+
+<sub>⭐ If this saves you a step, a star helps the next DSH user find it.</sub>
 
 ## What the move does
 
