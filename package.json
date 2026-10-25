@@ -1,6 +1,6 @@
 {
   "name": "dsh-move-to-workspace",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "Move a DeepSeek Harness conversation into another workspace: copies the transcript into a new session bound to the target folder, archives the original, and can register a new workspace folder from the picker.",
   "type": "module",
   "license": "MIT",
@@ -49,6 +49,13 @@
         "@deepseek-ai/dsh-client-ui-workspace",
         "@deepseek-ai/dsh-client-locale"
       ]
+    },
+    "catalog": {
+      "summary": {
+        "en": "Move a conversation into another workspace — or organize a whole folder of them at once — with the original archived and restorable.",
+        "zh": "把会话移动到其他工作区，或一次整理一个文件夹下的全部会话；原会话归档且可恢复。"
+      },
+      "category": "workflow"
     }
   },
   "repository": {

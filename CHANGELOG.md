@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.11 — 2026-10-25
+
+### Changed
+
+- Advertise a catalog category so plugin markets place it under Workflow, and note the repo topics that catalogue discovery needs.
+
 ## 0.1.9 — 2026-10-25
 
 - Copy, flush and attach the target before archiving the original. Failed copies leave the original visible.
