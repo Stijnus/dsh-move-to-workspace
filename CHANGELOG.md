@@ -6,6 +6,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-10-25
+
+### Fixed
+
+- Moving a real conversation no longer leaves DeepSeek delivery markers naming
+  the source Session. Copies now rewrite
+  `session-log-deepseek/delivery-accepted` markers to the moved Session id, so
+  the copied log loads instead of failing with "current-generation delivery
+  marker names the wrong Session". Message content that merely mentions the old
+  id is preserved untouched.
+
 ## [0.1.2] - 2026-10-25
 
 ### Changed

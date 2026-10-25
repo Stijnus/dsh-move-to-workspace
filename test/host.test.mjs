@@ -61,6 +61,22 @@ test('exports the Harness plugin contract', () => {
   }
 })
 
+test('rewriteSessionReferences retargets only the moved Session delivery marker', () => {
+  const events = [
+    { type: 'user/message', seq: 0, time: 1, data: { content: [{ type: 'text', text: 'session-old stays quoted here' }], source: { kind: 'user' } }, surfaceOp: 'append' },
+    { type: 'session-log-deepseek/delivery-accepted', seq: 1, time: 2, data: { sessionId: 'session-old', sessionFormatVersion: 4, throughSeq: 0 } },
+    { type: 'session-log-deepseek/delivery-accepted', seq: 2, time: 3, data: { sessionId: 'session-ancestor', sessionFormatVersion: 4, throughSeq: 1 } },
+  ]
+  const rewritten = plugin.rewriteSessionReferences(events, 'session-old', 'session-new')
+  assert.equal(rewritten[0], events[0])
+  assert.equal(rewritten[0].data.content[0].text, 'session-old stays quoted here')
+  assert.equal(rewritten[1].data.sessionId, 'session-new')
+  assert.equal(rewritten[1].seq, 1)
+  assert.equal(rewritten[1].data.throughSeq, 0)
+  assert.equal(rewritten[2].data.sessionId, 'session-ancestor')
+  assert.equal(events[1].data.sessionId, 'session-old')
+})
+
 test('registers one exact endpoint', () => {
   const route = captureRoute()
   assert.equal(route.kind, 'exact')

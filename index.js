@@ -230,6 +230,28 @@ async function moveSession(ctx, sessionId, workspaceId) {
 }
 
 /**
+ * Rewrite the copy's self-referencing delivery markers. The DeepSeek session-log
+ * plugin records `session-log-deepseek/delivery-accepted` events whose
+ * `sessionId` names the Session that produced them; the Session format
+ * validator rejects a current-generation marker that names another Session. A
+ * faithful event copy would keep the source id, so the moved log would load as
+ * corrupt. Every other field, and every occurrence of the id inside message
+ * content, stays untouched as historical fact.
+ *
+ * @param events - complete source event log.
+ * @param sourceSessionId - Session that produced the log.
+ * @param targetSessionId - Session the copy belongs to.
+ * @returns the events with only the source's delivery markers retargeted.
+ */
+export function rewriteSessionReferences(events, sourceSessionId, targetSessionId) {
+  return events.map((event) => {
+    if (event.type !== 'session-log-deepseek/delivery-accepted') return event
+    if (event.data?.sessionId !== sourceSessionId) return event
+    return { ...event, data: { ...event.data, sessionId: targetSessionId } }
+  })
+}
+
+/**
  * Copy one exact logical Session log into a new Session bound to the target
  * Workspace directory, then rebuild its projection checkpoint so the new row
  * carries the copied title before it is first opened.
@@ -253,7 +275,7 @@ async function copySession(ctx, snapshot, target) {
     ...(source.delegationDepth === undefined ? {} : { delegationDepth: source.delegationDepth }),
     ...(source.agentPreset === undefined ? {} : { agentPreset: source.agentPreset }),
   }
-  const events = snapshot.events
+  const events = rewriteSessionReferences(snapshot.events, String(source.id), sessionId)
   const inheritedEventCount = snapshot.inheritedEventCount
 
   const handle = await ctx.sessionPersistence.create(header, { inheritedEventCount })
