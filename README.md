@@ -16,6 +16,18 @@ target workspace — or register a new folder from the same dialog with
 workspace with its full history and title, continues there, and the original is
 archived in its old workspace (restorable with **Unarchive**).
 
+[Install](#quick-start) · [Walkthrough](#try-it-on-a-test-conversation) · [Move behavior](#what-the-move-does) · [Limits](#limits)
+
+## Try it on a test conversation
+
+After installing, use a disposable conversation with at least one message and two existing workspace folders:
+
+1. Wait for all turns and background work to finish.
+2. Open the conversation’s **…** menu, choose **Move to workspace…**, select the other workspace, and confirm.
+3. Check its history and title in the target workspace; the original should appear among archived conversations in the source workspace.
+
+This is a local walkthrough, not a hosted demo. A move to a different folder creates a new session ID and leaves the original archived. It moves conversation history; it does not copy project files. Review [Consequences](#consequences) before using it on ongoing work.
+
 ## Quick start
 
 ```sh
